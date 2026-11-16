@@ -1,0 +1,19 @@
+schema_version = "1.4"
+artifacts = ["/app/output"]
+
+[task]
+name = "swarmory/hello"
+version = "1.0.0"
+description = "Write hello to a file: a task for testing eval jobs, which any model passes and nop fails"
+
+[environment]
+network_mode = "no-network"
+cpus = 1
+memory_mb = 2048
+
+[agent]
+user = "agent"
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 120.0

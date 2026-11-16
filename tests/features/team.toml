@@ -1,0 +1,21 @@
+# Each agent runs on a model of another provider than its harness's, through the server's LiteLLM, except Turing,
+# who asks for the jobs.
+[[agent]]
+harness = "claude-code"
+name = "Ada"
+model = "openai/gpt-6.1-sol"
+
+[[agent]]
+harness = "codex"
+name = "Grace"
+model = "anthropic/claude-sonnet-5-5"
+
+[[agent]]
+harness = "claude-code"
+name = "Linus"
+model = "gemini/gemini-4-argon"
+
+[[agent]]
+harness = "claude-code"
+name = "Turing"
+model = "claude-haiku-5-5"

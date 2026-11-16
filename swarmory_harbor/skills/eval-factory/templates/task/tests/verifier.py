@@ -1,0 +1,47 @@
+"""Verify the solver's /app/output against key.json.
+
+Writes the full record to grade.json and only its numbers to reward.json, because Harbor rejects a reward.json that
+holds anything but numbers.
+"""
+import json
+from pathlib import Path
+import sys
+
+VERSION = "1"
+KEY = Path(__file__).with_name("key.json")
+MAX_BYTES = 1 << 20
+
+
+def record(reward, failed_check, checks, partial=0.0):
+    return {"reward": reward, "partial_score": partial, "verifier_version": VERSION, "failed_check": failed_check,
+            "checks": checks}
+
+
+def grade(output_dir, key, hardening=True):
+    """The record for one submission. `hardening=False` exists only so tests can prove an exploit was real."""
+    answer = Path(output_dir) / "answer.txt"
+    if not answer.is_file() or answer.is_symlink():
+        return record(0.0, "answer_file", [{"id": "answer_file", "passed": False}])
+    # The solver writes this file. Read bytes, so text that isn't UTF-8 fails a check instead of crashing the verifier.
+    with answer.open("rb") as file:
+        data = file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        return record(0.0, "answer_size", [{"id": "answer_size", "passed": False}])
+    text = data.decode("utf-8", errors="replace")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if hardening and len(lines) != 1:
+        return record(0.0, "one_answer", [{"id": "one_answer", "passed": False, "value": len(lines)}])
+    correct = key["answer"] in lines
+    return record(float(correct), None if correct else "answer", [{"id": "answer", "passed": correct}],
+                  float(correct))
+
+
+def write(result, verifier_dir):
+    verifier_dir = Path(verifier_dir)
+    (verifier_dir / "grade.json").write_text(json.dumps(result, indent=1))
+    (verifier_dir / "reward.json").write_text(json.dumps({"reward": result["reward"],
+                                                          "partial_score": result["partial_score"]}))
+
+
+if __name__ == "__main__":
+    write(grade(sys.argv[1], json.loads(KEY.read_text())), sys.argv[2])

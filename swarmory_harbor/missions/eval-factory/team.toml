@@ -1,0 +1,10 @@
+[[agent]]
+harness = "claude-code"
+model = "claude-opus-5-5"
+count = 2
+role = "Build tasks, each on its own issue, until the strongest model fails some runs for the reason its claim names."
+
+[[agent]]
+harness = "codex"
+model = "gpt-6.1-sol"
+role = "Test tasks you didn't build for flaws, so they're fixed before any model is measured: a pass without the capability, a valid answer the verifier fails, or a broken environment."

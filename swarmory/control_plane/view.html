@@ -1,0 +1,2120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>swarmory</title>
+<style>
+:root {
+  --bg: #ffffff; --side: #f5f5f3; --panel: #fafaf9; --raise: #ffffff;
+  --line: #e7e6e2; --line-2: #efeeea;
+  --text: #17181c; --ink-2: #3c3f48; --nav: #2b2d34; --text-2: #5c5f6a; --text-3: #6b6e78;
+  --hover: rgba(23, 24, 28, .05);
+  --sel: #e3e5fa; --sel-text: #232e9e;
+  --accent: #3d4bdb; --accent-soft: #eef0fd; --accent-ink: #2a36b8; --on-accent: #ffffff;
+  --code-bg: #f5f5f3; --cell: #f3f2ef; --bar: #f0efec;
+  --todo: #6b6e78; --todo-fill: #c9cbd1; --doing: #8a5c00; --doing-fill: #e0a126;
+  --done: #1e9461; --done-ink: #146b45; --done-soft: #e8f5ee; --done-line: #bfe3d2;
+  --canceled: #b3362e; --bad-soft: #fbeeec; --bad-line: #efc4bf; --quiet: #c9c8c2;
+  --shadow: 0 1px 2px rgba(20, 18, 14, .06), 0 8px 28px rgba(20, 18, 14, .10);
+  --p0: #4353d6; --p1: #0f8577; --p2: #c2416b; --p3: #a8650b; --p4: #7a4fc9; --p5: #1977ad; --p6: #44801d; --p7: #bd4b24;
+  --p8: #890028; --p9: #62187a; --p10: #0e318f; --p11: #00580d; --p12: #774e6d; --p13: #6f4a05; --p14: #005d6f; --p15: #ab52a9; --p16: #4c4691; --p17: #8a1f68; --p18: #6c6c42; --p19: #786b9e;
+  --human: #3a3c44; --on-av: #ffffff;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181b; --side: #1d1e22; --panel: #1a1b1f; --raise: #222327;
+    --line: #2c2e34; --line-2: #25272c;
+    --text: #ececee; --ink-2: #c9cbd1; --nav: #d5d6db; --text-2: #a6a9b2; --text-3: #8c8f99;
+    --hover: rgba(255, 255, 255, .06);
+    --sel: rgba(139, 150, 245, .2); --sel-text: #c5cbff;
+    --accent: #8b96f5; --accent-soft: rgba(139, 150, 245, .16); --accent-ink: #aeb6ff; --on-accent: #14162e;
+    --code-bg: #222328; --cell: #24262b; --bar: #2a2c32;
+    --todo: #8c8f99; --todo-fill: #555861; --doing: #e0a93a; --doing-fill: #d39a2a;
+    --done: #3dba85; --done-ink: #6ad3a4; --done-soft: rgba(61, 186, 133, .14); --done-line: rgba(61, 186, 133, .35);
+    --canceled: #ea7b71; --bad-soft: rgba(234, 123, 113, .12); --bad-line: rgba(234, 123, 113, .35); --quiet: #4a4c54;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 32px rgba(0, 0, 0, .45);
+    --p0: #7c89f0; --p1: #2bb3a3; --p2: #e06a93; --p3: #d39a3a; --p4: #a583ea; --p5: #4aaee6; --p6: #7dbb55; --p7: #e98058;
+    --p8: #f2c8ef; --p9: #00f9db; --p10: #e9dc4b; --p11: #adcfac; --p12: #f28ee4; --p13: #ffb88e; --p14: #b7a9d2; --p15: #80d8fe; --p16: #8fe47d; --p17: #939855; --p18: #fe93a1; --p19: #0cd6ac;
+    --human: #8a8d97; --on-av: #15161a;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px; }
+h1, h2, h3, p { margin: 0; }
+section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+h2 { font-size: 12px; font-weight: 600; color: var(--text-3); letter-spacing: .04em; text-transform: uppercase; }
+.tnum, time { font-variant-numeric: tabular-nums; }
+.mono, .iid, .csha { font-family: var(--mono); }
+.iid { font-size: 12px; color: var(--text-3); flex: none; }
+.lk { color: var(--accent-ink); font-size: 13px; font-weight: 500; text-decoration: none; }
+.lk:hover { text-decoration: underline; }
+.cap { font-size: 12.5px; color: var(--text-2); }
+.ghost { padding: 40px 28px; color: var(--text-3); font-size: 13.5px; }
+.none { font-size: 13px; color: var(--text-3); }
+
+/* ---------- frame: sidebar, one main pane, the time bar under it ---------- */
+#app { display: grid; height: 100vh; height: 100dvh; grid-template: "side main" minmax(0, 1fr) "side tl" auto / 256px minmax(0, 1fr); }
+#side { grid-area: side; background: var(--side); padding: 18px 12px 20px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+#main { grid-area: main; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; border-left: 1px solid var(--line); }
+#rail { grid-area: rail; display: none; background: var(--panel); border-left: 1px solid var(--line); padding: 20px 22px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+#tl { grid-area: tl; border-top: 1px solid var(--line); border-left: 1px solid var(--line); background: var(--panel); }
+@media (min-width: 1180px) {
+  body[data-mode=conv] #app { grid-template: "side main rail" minmax(0, 1fr) "side tl rail" auto / 256px minmax(0, 1fr) 320px; }
+  body[data-mode=conv] #rail { display: flex; flex-direction: column; gap: 26px; }
+}
+
+/* ---------- avatars: a square in the member's colour with an initial ---------- */
+.av { flex: none; width: 36px; height: 36px; border-radius: 9px; display: inline-grid; place-items: center; color: var(--on-av); font-weight: 700; font-size: 15px; user-select: none; background: var(--p0); }
+.av.s32 { width: 32px; height: 32px; border-radius: 8px; font-size: 14px; }
+.av.s26 { width: 26px; height: 26px; border-radius: 7px; font-size: 12px; }
+.av.s20, .av.s22 { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; }
+.av.s22 { width: 22px; height: 22px; }
+.av.s16 { width: 16px; height: 16px; border-radius: 5px; font-size: 9px; }
+.sglyph { flex: none; display: inline-grid; width: 16px; height: 16px; }
+.sglyph svg { width: 16px; height: 16px; }
+.dot { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--quiet); }
+.dot.on { background: var(--done); }
+
+/* ---------- sidebar ---------- */
+.ws { padding: 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.ws-name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-st { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.ws-st .dot { width: 8px; height: 8px; }
+#filter { flex: none; margin: -8px 0; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--raise); color: var(--text); font: 13px var(--sans); outline: none; width: 100%; }
+#filter:focus { border-color: var(--accent); }
+#nav { display: contents; }
+.sec { display: flex; flex-direction: column; gap: 2px; }
+.sec-h { padding: 0 10px 4px; font-size: 12px; font-weight: 600; color: var(--text-3); }
+.row { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; flex: none; padding: 0 10px; border-radius: 8px; color: var(--nav); font-weight: 450; }
+.row.view { height: 34px; gap: 10px; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--sel); color: var(--sel-text); font-weight: 600; }
+.row .ic { width: 16px; flex: none; text-align: center; color: var(--text-3); }
+.row .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+.row .cnt { flex: none; font-size: 12px; font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.row.sel :is(.ic, .cnt, .iid) { color: inherit; }
+.row .ring { flex: none; width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--todo); }
+.row .ring.on { background: var(--done); box-shadow: none; }
+.pairs { display: flex; flex: none; }
+.pairs .av + .av { margin-left: -5px; box-shadow: 0 0 0 2px var(--side); }
+.row.sel .pairs .av + .av { box-shadow: 0 0 0 2px var(--sel); }
+.tog { padding: 4px 10px 0 34px; font-size: 12.5px; color: var(--text-2); }
+.tog:hover { color: var(--text); }
+.sec .none { padding: 2px 10px; }
+
+/* ---------- the pane's header ---------- */
+#head { flex: none; display: flex; align-items: center; gap: 14px; height: 60px; padding: 0 28px; border-bottom: 1px solid var(--line); }
+.hbtn { display: none; width: 32px; height: 32px; border-radius: 8px; place-items: center; color: var(--text-2); flex: none; margin-left: -6px; }
+.hbtn:hover { background: var(--hover); }
+.hbtn svg { width: 18px; height: 18px; }
+#headMain { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+#headMain h1 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 40px; unicode-bidi: isolate; }
+.hsub { color: var(--text-2); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 9999 auto; }
+.hmono { font: 12.5px var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 99 auto; }
+#headRight { flex: none; color: var(--text-2); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.state { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px; border-radius: 20px; background: var(--cell); color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.state.on { background: var(--done-soft); color: var(--done-ink); }
+
+/* ---------- panes ---------- */
+.pane { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.pane[hidden], #jump[hidden] { display: none; }
+.page { padding: 24px 28px 32px; display: flex; flex-direction: column; gap: 28px; }
+.split { display: flex; flex-wrap: wrap; gap: 28px 36px; }
+.split > * { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.g3 { flex: 3 1 420px; } .g2 { flex: 2 1 280px; } .g1 { flex: 1 1 260px; } .gfull { flex: 1 1 100%; }
+.sh { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.ox { overflow-x: auto; flex: none; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.tile { padding: 16px 18px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; min-width: 0; }
+.tile .k, .tile .s { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.tile .v { font-size: 28px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.25; white-space: nowrap; }
+.kv { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 8px; font-variant-numeric: tabular-nums; }
+.kv b { display: block; font-size: 16px; font-weight: 650; }
+.kv span { font-size: 12px; color: var(--text-3); }
+.key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
+.key span { display: flex; align-items: center; gap: 6px; }
+.sw { flex: none; width: 10px; height: 10px; border-radius: 3px; }
+svg.chart { width: 100%; height: auto; display: block; }
+svg.chart text { font-size: 11px; fill: var(--text-3); font-family: var(--sans); font-variant-numeric: tabular-nums; }
+svg.chart text.now { fill: var(--text); font-weight: 600; }
+svg.chart .gl { stroke: var(--line-2); } svg.chart .ax { stroke: var(--line); }
+svg.chart .nowl { stroke: var(--text); stroke-dasharray: 3 3; }
+.meter { height: 10px; border-radius: 5px; background: var(--bar); overflow: hidden; }
+.meter > i { display: block; height: 100%; border-radius: 5px; background: var(--accent); }
+.bars { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13.5px; }
+.bars .nm { display: flex; align-items: center; gap: 8px; font-weight: 500; min-width: 0; }
+.bars .n { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------- a conversation ---------- */
+.msgs { padding: 14px 0 14px; max-width: 920px; }
+.msg { display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px; padding: 8px 28px; position: relative; }
+.msg.cont { padding-top: 0; margin-top: -4px; }
+.msg .gut { position: relative; }
+.msg .gtime { display: none; position: absolute; right: 0; top: 3px; font-size: 10.5px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.msg.cont:hover .gtime { display: block; }
+.mh { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mh .nm { font-weight: 650; font-size: 14.5px; }
+.mh time { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.mh .verb { font-size: 12.5px; color: var(--text-3); }
+.mh .ctx { font-size: 11.5px; font-weight: 600; color: var(--text-3); border-radius: 4px; padding: 0 5px; background: var(--hover); }
+.mh .ctx:hover { color: var(--text); }
+.tx { font-size: 14.5px; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.att { display: inline-block; margin: 6px 6px 0 0; padding: 3px 8px; font: 12.5px/1.4 var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; }
+.tx code { font: 12.6px/1 var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
+.tx pre, .ib pre, .note pre { margin: 4px 0; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 7px; overflow-x: auto; white-space: pre; }
+.tx pre code, .ib pre code, .note pre code { font: 12.5px/1.5 var(--mono); background: none; border: 0; padding: 0; }
+.lnk { color: var(--accent-ink); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.tx.clamp:not(.open) { max-height: 21em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.more-tx { font-size: 12px; font-weight: 600; color: var(--text-3); padding: 2px 0; }
+.more { display: block; margin: 6px auto; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; color: var(--text-3); background: var(--hover); }
+.more[hidden] { display: none; }
+.mn { color: var(--accent-ink); background: var(--accent-soft); border-radius: 4px; padding: 0 2px; font-weight: 600; }
+.mn.all { color: var(--doing); background: color-mix(in srgb, var(--doing) 15%, transparent); }
+.iref, button.sha { color: var(--accent-ink); font-weight: 600; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-underline-offset: 2px; }
+.pill, .thr { display: inline-flex; align-items: center; margin: 6px 6px 0 0; padding: 2px 10px; border-radius: 20px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12.5px; font-weight: 500; }
+.thr:hover, .thr.sel { box-shadow: inset 0 0 0 1px var(--accent); }
+.qcard { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; max-width: 560px; margin-top: 3px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13.5px; }
+button.qcard:hover { border-color: var(--todo); }
+.qcard .csha { font-size: 12.5px; color: var(--text-2); }
+.qcard .what { flex: 1; min-width: 120px; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.qcard.job .what { font: 12.5px var(--mono); color: var(--ink-2); min-width: 160px; }
+.qcard .res { font-weight: 600; }
+.qcard.done { border-color: var(--done-line); background: var(--done-soft); } .qcard.done .res { color: var(--done-ink); }
+.qcard.failed { border-color: var(--bad-line); background: var(--bad-soft); } .qcard.failed .res { color: var(--canceled); }
+.add { color: var(--done-ink); } .del { color: var(--canceled); }
+.add, .del { font: 12.5px var(--mono); }
+mark { background: color-mix(in srgb, var(--doing-fill) 32%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.hit { cursor: pointer; border-bottom: 1px solid var(--line-2); }
+.msg.flash { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+.act { display: flex; align-items: flex-start; gap: 12px; padding: 3px 28px; font-size: 13px; color: var(--text-2); }
+.act .aic { width: 36px; flex: none; display: flex; justify-content: center; padding-top: 2px; color: var(--text-3); }
+.act .aic svg { width: 14px; height: 14px; }
+.act .abody { min-width: 0; flex: 1; }
+.act .who { font-weight: 600; color: var(--text); }
+.act time { margin-left: 8px; font-size: 12px; color: var(--text-3); }
+.act .note { display: block; margin-top: 3px; padding: 2px 10px; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.st { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--c); vertical-align: -2px; }
+.st svg { width: 14px; height: 14px; }
+.st-todo { --c: var(--todo); } .st-doing { --c: var(--doing); } .st-done { --c: var(--done); } .st-canceled { --c: var(--todo); }
+.divider { display: flex; align-items: center; gap: 12px; padding: 10px 28px 6px; font-size: 12px; font-weight: 500; color: var(--text-3); }
+.divider::before, .divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+.intro { padding: 10px 28px 8px; color: var(--text-2); font-size: 13.5px; }
+.icard { margin: 6px 28px 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; }
+.icard .im { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); }
+.icard .im b { color: var(--text); font-weight: 600; }
+.icard .ib { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+#jump { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); height: 30px; padding: 0 14px; border-radius: 15px; background: var(--accent); color: var(--on-accent); font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow); }
+#banner { position: absolute; top: 68px; left: 50%; transform: translateX(-50%); display: none; padding: 6px 12px; border-radius: 8px; background: var(--raise); border: 1px solid var(--line); color: var(--text-2); font-size: 12.5px; box-shadow: var(--shadow); z-index: 5; }
+#banner.on { display: block; }
+
+/* ---------- right panel of a conversation ---------- */
+.big { display: flex; align-items: baseline; gap: 8px; }
+.big b { font-size: 32px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.big span { color: var(--text-2); font-size: 13.5px; }
+#rail .meter { height: 6px; }
+.now { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; }
+.now .nm { display: block; font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now .stt { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.now .usd { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.stackbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 2px; }
+
+/* ---------- board ---------- */
+.board { display: flex; flex-wrap: wrap; min-height: 100%; }
+.blist { flex: 3 1 480px; min-width: 0; padding: 20px 28px; display: flex; flex-direction: column; gap: 18px; }
+.blist section { gap: 0; }
+.bside { flex: 2 1 380px; min-width: 0; border-left: 1px solid var(--line); background: var(--panel); padding: 20px 24px; display: flex; flex-direction: column; gap: 26px; }
+.bside section { gap: 8px; }
+.gh { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 12px; border-radius: 8px; background: var(--side); font-weight: 600; font-size: 13.5px; }
+.gh .n { color: var(--text-3); font-weight: 500; font-variant-numeric: tabular-nums; }
+.irow { display: grid; grid-template-columns: 16px 34px minmax(0, 1fr) auto 96px; gap: 12px; align-items: center; width: 100%; height: 46px; padding: 0 12px; border-bottom: 1px solid var(--line-2); }
+.irow:hover { background: var(--hover); }
+.irow .ttl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; unicode-bidi: isolate; }
+.irow .who { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.irow .when { font-size: 12.5px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.blist .tog { padding: 8px 12px 0; }
+.life { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: center; width: 100%; height: var(--lh, 22px); }
+.life:hover .iid { color: var(--text); }
+.life > span:last-child { position: relative; height: 12px; }
+.life i { position: absolute; top: 4px; height: 4px; min-width: 4px; border-radius: 6px; background: var(--todo-fill); }
+.life i.doing { top: 0; height: 12px; } .life i.done { background: var(--done); } .life i.canceled { background: var(--line); }
+
+/* ---------- cost and tokens ---------- */
+.tbl { width: 100%; min-width: 820px; border-collapse: collapse; text-align: right; font-variant-numeric: tabular-nums; }
+.tbl :is(th, td) { height: 46px; padding: 0 8px; border-bottom: 1px solid var(--line-2); font-weight: inherit; white-space: nowrap; }
+.tbl :is(th, td):nth-child(-n+2) { text-align: left; }
+.tbl thead th { height: auto; padding: 8px; font-size: 12px; font-weight: 600; color: var(--text-3); border-bottom-color: var(--line); }
+.tbl tfoot :is(th, td) { font-weight: 700; border-bottom: 0; }
+.tbl tr[data-agent] { cursor: pointer; }
+.tbl tr[data-agent]:hover { background: var(--hover); }
+.tbl .nm { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.tbl .mono { font-size: 12.5px; color: var(--ink-2); }
+.tbl b { font-weight: 600; }
+
+/* ---------- patterns ---------- */
+.heat { display: grid; grid-template-columns: var(--lab, 76px) repeat(var(--n), minmax(0, 1fr)); gap: 4px; align-items: center; }
+.heat .nm { font-weight: 500; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heat .c { display: grid; place-items: center; height: var(--ch, 30px); border-radius: 6px; background: var(--cell); }
+.heat .c i { border-radius: 50%; background: var(--bg); }
+.heat.ax { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.heat.ax span { overflow: visible; width: 0; }
+.mx .nm { text-align: right; padding-right: 6px; font-size: 13px; }
+.mx .hd { display: grid; place-items: center; font-size: 12px; color: var(--text-2); overflow: hidden; }
+.mx .c { height: var(--ch, 38px); border-radius: 7px; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text); }
+.mx .c.self { background: none; }
+button.c:hover { box-shadow: 0 0 0 2px var(--accent); }
+.hist { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.hist.b { align-items: end; height: 150px; }
+.hist.b > div { display: flex; flex-direction: column; align-items: center; gap: 6px; justify-content: flex-end; height: 100%; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hist.b i { width: 100%; min-height: 3px; border-radius: 6px 6px 0 0; background: var(--accent); }
+.hist.b i.z { background: var(--line); }
+.hist.l { font-size: 12px; color: var(--text-2); text-align: center; }
+.lead { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; }
+.lead > :nth-child(3n) { grid-column: 1 / -1; }
+.lead .who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-weight: 600; }
+.lead > .cap:nth-child(n+3) { margin-top: 10px; }
+
+/* ---------- one agent ---------- */
+.strip { position: relative; height: 22px; }
+.strip::before { content: ""; position: absolute; left: 0; right: 0; top: 10px; height: 2px; background: var(--line-2); }
+.strip i { position: absolute; top: 2px; height: 18px; min-width: 3px; border-radius: 9px; }
+.axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.axis :last-child { color: var(--text); font-weight: 600; }
+.drow { display: grid; grid-template-columns: 44px 92px minmax(0, 1fr); gap: 12px; width: 100%; padding: 8px 0; border-bottom: 1px solid var(--line-2); align-items: baseline; }
+button.drow:hover { background: var(--hover); }
+.drow time { font-size: 12px; color: var(--text-3); }
+.drow .kd { font-size: 12.5px; font-weight: 500; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow .kd.good { color: var(--done-ink); }
+.drow .tx { font-size: 14px; white-space: normal; }
+.drow .nt { color: var(--text-3); font-size: 12.5px; }
+.aside { gap: 24px !important; }
+.aside section { gap: 8px; font-size: 13.5px; }
+.talk { grid-template-columns: 22px auto minmax(0, 1fr) auto; }
+.talk .meter { height: 8px; }
+.aside button.il { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aside button.il:hover { color: var(--accent-ink); }
+
+/* ---------- time bar ---------- */
+#tl { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 8px 28px calc(8px + env(safe-area-inset-bottom)); font-size: 13px; font-variant-numeric: tabular-nums; }
+#liveBtn { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 20px; border: 1px solid var(--line); background: var(--raise); color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+#liveBtn.at { cursor: default; color: var(--text-3); }
+#liveBtn.at.live { border-color: var(--done); color: var(--done-ink); }
+#liveBtn.at.live .dot { background: var(--done); }
+#liveBtn:not(.at) { border-color: var(--accent); color: var(--accent-ink); }
+#liveBtn:not(.at) .dot { background: var(--accent); }
+#play { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--text); color: var(--bg); flex: none; }
+#play svg { width: 12px; height: 12px; }
+#tlA { font-weight: 600; min-width: 34px; }
+#tlB, .tl-hint { color: var(--text-2); white-space: nowrap; }
+#track { flex: 1; min-width: 80px; position: relative; height: 28px; cursor: pointer; touch-action: none; }
+#track .tb, #track .tf { position: absolute; left: 0; right: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--line); pointer-events: none; }
+#track .tf { right: auto; background: var(--accent); }
+#marks i { position: absolute; top: 4px; width: 2px; height: 6px; margin-left: -1px; border-radius: 1px; pointer-events: none; }
+#track .tt { position: absolute; top: 6px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--raise); border: 2px solid var(--accent); pointer-events: none; }
+#tip { position: absolute; bottom: calc(100% + 4px); transform: translateX(-50%); padding: 4px 8px; border-radius: 6px; background: var(--text); color: var(--bg); font-size: 11.5px; font-weight: 600; white-space: nowrap; pointer-events: none; display: none; }
+.seg { display: flex; flex: none; gap: 2px; background: var(--hover); border-radius: 8px; padding: 2px; }
+.seg button { height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--text-3); }
+.seg button.on { background: var(--raise); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+
+/* ---------- drawer: a commit's patch, or a message's replies ---------- */
+#drawer { display: none; }
+#drawer.on { display: flex; flex-direction: column; position: absolute; inset: 0 0 0 auto; width: min(680px, 100%); z-index: 6; background: var(--bg); border-left: 1px solid var(--line); box-shadow: var(--shadow); }
+.dhead { flex: none; display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--line); }
+.hcol { flex: 1; min-width: 0; }
+.htitle { font-weight: 700; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
+.hcol .hsub { display: block; font-size: 12.5px; white-space: nowrap; }
+.xbtn { flex: none; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--text-2); }
+.xbtn:hover { background: var(--hover); }
+.xbtn svg { width: 14px; height: 14px; }
+#dScroller { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+#dMsgs .msg, #dMsgs .act { padding-left: 20px; padding-right: 20px; }
+
+/* ---------- commits ---------- */
+.clist { max-width: 920px; padding: 6px 0 18px; }
+.crow { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 28px; border-bottom: 1px solid var(--line-2); }
+button.crow:hover { background: var(--hover); }
+.crow.sel { background: var(--sel); }
+.cmain { flex: 1; min-width: 0; }
+.cs { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+.cmeta { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+.csha { font-size: 12px; color: var(--text-2); }
+.rf .cs { color: var(--canceled); }
+.cdet { display: grid; gap: 12px; padding: 14px 20px 28px; min-width: 0; }
+.cbody { color: var(--text-2); font-size: 13.5px; }
+.cfiles, .df { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.cf, .dfh { display: flex; gap: 10px; width: 100%; padding: 6px 12px; font: 12px/1.5 var(--mono); }
+.cf + .cf { border-top: 1px solid var(--line-2); }
+.cf:hover { background: var(--hover); }
+.cf span:first-child, .dfh span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dfh { background: var(--side); border-bottom: 1px solid var(--line); font-weight: 600; }
+.dx { overflow-x: auto; }
+.dx pre { display: inline-block; min-width: 100%; margin: 0; padding: 4px 0; font: 12px/1.55 var(--mono); }
+.dx pre span { display: block; padding: 0 12px; min-height: 1.55em; }
+.da { background: color-mix(in srgb, var(--done) 15%, transparent); }
+.dd { background: color-mix(in srgb, var(--canceled) 13%, transparent); }
+.dh { color: var(--accent-ink); background: var(--accent-soft); }
+.dm { color: var(--text-3); }
+
+/* ---------- an agent's trace ---------- */
+.trace { display: grid; gap: 10px; max-width: 920px; padding: 20px 28px 40px; min-width: 0; }
+.tsleep { display: flex; align-items: center; gap: 8px; padding: 2px 6px; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tsleep::before { content: ''; width: 2px; height: 18px; border-radius: 1px; background: var(--line); }
+.tmsgs { margin: 4px 0 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--raise); overflow: hidden; }
+.tmsgs .msg { padding-top: 6px; padding-bottom: 6px; }
+.ts.sent .ti { color: var(--accent-ink); }
+.tsum { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 4px; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tsum b { color: var(--text-2); font-weight: 620; }
+.tses { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.tses > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--side); min-width: 0; }
+.tses > summary::-webkit-details-marker, .ts details > summary::-webkit-details-marker { display: none; }
+.tses[open] > summary { border-bottom: 1px solid var(--line); }
+.tsn { flex: none; font-weight: 650; font-size: 13px; }
+.tsm { flex: 1; min-width: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tst { flex: none; font: 11px/1.6 var(--mono); padding: 0 7px; border-radius: 999px; background: var(--cell); color: var(--text-2); }
+.tst.ok, .tst.live { color: var(--done-ink); } .tst.bad { color: var(--canceled); }
+.tsb { display: grid; gap: 1px; padding: 6px 0 8px; min-width: 0; }
+.ts { display: flex; gap: 9px; padding: 4px 12px; min-width: 0; align-items: flex-start; font-size: 13px; line-height: 1.45; }
+.ts .ti { flex: none; width: 15px; height: 15px; margin-top: 2px; color: var(--text-3); }
+.ts .ti svg { width: 14px; height: 14px; display: block; }
+.ts .tc { flex: 1; min-width: 0; }
+.tl { overflow-wrap: anywhere; color: var(--text); white-space: pre-wrap; }
+.tl.mono { font: 12.2px/1.5 var(--mono); }
+.tl .who { font-weight: 650; }
+.ts details > summary { list-style: none; cursor: pointer; }
+.ts details > summary .tl { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ts details[open] > summary .tl { display: block; }
+.tmeta { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tmeta .bad, .ts.err .tl { color: var(--canceled); }
+.tout { margin: 4px 0 2px; padding: 6px 9px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 7px; font: 11.8px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; color: var(--text-2); }
+.ts.say .tl { font-size: 14px; line-height: 1.5; }
+.ts.told { margin: 2px 8px 4px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); }
+.ts.told .ti { color: var(--accent-ink); }
+.ts.think .tl { color: var(--text-2); font-style: italic; }
+.ts.say-team .ti { color: var(--accent-ink); }
+.ts.warned .tl, .ts.warned .ti { color: var(--doing); }
+.tkids { margin: 6px 0 2px; padding-left: 4px; border-left: 2px solid var(--line); display: grid; gap: 1px; }
+.tkids .ts { padding-left: 8px; }
+.tdiv { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 11.5px; color: var(--text-3); }
+.tdiv::before, .tdiv::after { content: ''; flex: 1; border-top: 1px dashed var(--line); }
+.todo { list-style: none; margin: 2px 0 0; padding: 0; }
+.todo li::before { content: '○ '; color: var(--text-3); }
+.todo li.done { color: var(--text-3); text-decoration: line-through; }
+.todo li.done::before { content: '● '; color: var(--done); }
+
+/* ---------- overlays ---------- */
+#scrim { display: none; position: fixed; inset: 0; background: rgba(10, 10, 12, .32); z-index: 20; }
+#fatal { display: none; position: fixed; inset: 0; z-index: 40; background: var(--bg); place-items: center; padding: 24px; }
+#fatal.on { display: grid; }
+#fatal .box { max-width: 420px; text-align: center; }
+#fatal h1 { font-size: 20px; letter-spacing: -.015em; margin: 0 0 6px; }
+#fatal p { color: var(--text-2); line-height: 1.55; }
+
+/* ---------- narrow screens ---------- */
+@media (max-width: 1279px) { .tl-hint { display: none; } }
+@media (max-width: 759px) {
+  #app { grid-template: "main" minmax(0, 1fr) "tl" auto / minmax(0, 1fr); }
+  #side { position: fixed; top: 0; left: 0; bottom: 0; width: min(288px, 86vw); z-index: 30; transform: translateX(-102%); transition: transform .2s ease; box-shadow: var(--shadow); }
+  body.side-open #side { transform: none; }
+  body.side-open #scrim { display: block; }
+  #main, #tl { border-left: 0; }
+  .hbtn { display: grid; }
+  #head { padding: 0 14px; gap: 10px; }
+  #headRight:not(:has(.state)), #head .hmono, #speeds, #tlB { display: none; }
+  .msg, .act, .divider, .intro { padding-left: 14px; padding-right: 14px; }
+  .icard { margin-left: 14px; margin-right: 14px; }
+  .page, .blist, .bside, .trace { padding-left: 14px; padding-right: 14px; }
+  .board { display: block; }
+  .bside { border-left: 0; border-top: 1px solid var(--line); }
+  .irow { grid-template-columns: 16px 30px minmax(0, 1fr) auto; }
+  .irow .when, .irow .who span:last-child { display: none; }
+  .crow { padding-left: 14px; padding-right: 14px; }
+  .tile { padding: 12px 14px; } .tile .v { font-size: 22px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .drow { grid-template-columns: 40px minmax(0, 1fr); } .drow .kd { grid-column: 2; grid-row: 1; } .drow .tx { grid-column: 2; }
+  #tl { gap: 10px; padding-left: 12px; padding-right: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side" aria-label="Run">
+    <div class="ws"><div class="ws-name" id="wsName">Connecting</div><div class="ws-st"><span class="dot" id="wsDot"></span><span id="wsState">Loading</span></div></div>
+    <input id="filter" type="search" placeholder="Search messages" aria-label="Search messages and conversations">
+    <nav id="nav"></nav>
+  </aside>
+
+  <main id="main">
+    <header id="head">
+      <button class="hbtn" id="sideBtn" aria-label="Menu"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg></button>
+      <div id="headMain"></div>
+      <div id="headRight"></div>
+    </header>
+    <div id="convPane" class="pane"><div id="msgs" class="msgs"><div class="ghost">Loading the run…</div></div></div>
+    <div id="boardPane" class="pane" hidden></div>
+    <div id="statsPane" class="pane" hidden></div>
+    <div id="patternsPane" class="pane" hidden></div>
+    <div id="agentPane" class="pane" hidden></div>
+    <div id="tracePane" class="pane" hidden></div>
+    <div id="commitsPane" class="pane" hidden></div>
+    <div id="searchPane" class="pane" hidden></div>
+    <aside id="drawer" aria-label="Details"><div class="dhead" id="dHead"></div><div id="dScroller"><div id="dMsgs" class="msgs"></div></div></aside>
+    <button id="jump" hidden>Jump to latest ↓</button>
+    <div id="banner"></div>
+  </main>
+
+  <aside id="rail" aria-label="Spend, agents and board"></aside>
+
+  <footer id="tl">
+    <button id="liveBtn"><span class="dot"></span><span id="liveTxt">Live</span></button>
+    <button id="play" aria-label="Play"></button>
+    <span id="tlA">0:00</span>
+    <div id="track" tabindex="0" role="slider" aria-label="Run timeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><i class="tb"></i><i class="tf" id="tlFill"></i><span id="marks"></span><i class="tt" id="tlThumb"></i><div id="tip"></div></div>
+    <span id="tlB"></span>
+    <div class="seg" id="speeds"></div>
+    <span class="tl-hint">Drag to see the run at any moment</span>
+  </footer>
+</div>
+<div id="scrim"></div>
+<div id="fatal"><div class="box"><h1 id="fatalH"></h1><p id="fatalP"></p></div></div>
+
+<script>
+'use strict';
+
+/* ================= constants ================= */
+const GROUP_GAP = 300;         // consecutive messages from one author within this many seconds share a header
+const DIVIDER_GAP = 900;       // a quiet gap this long draws a time divider in the conversation
+const CAP = 500;               // conversation rows kept in the DOM; older ones load on scroll
+const ACTIVE_GAP = 120;        // an agent is active while its model calls come less than this many seconds apart
+const STATUSES = ['doing', 'todo', 'done', 'canceled'];
+const STATUS_LABEL = { todo: 'To do', doing: 'Doing', done: 'Done', canceled: 'Canceled' };
+const CLOSED = new Set(['done', 'canceled']);
+const GROUPS = { all: 'all', channel: 'channel', here: 'channel' };   // the control plane's group mentions
+const SYSTEM = 'swarmory';     // the author of what the control plane posts itself, such as a job's result
+const MAIN = 'refs/heads/main';
+const SHA = /^[0-9a-f]{7,40}$/;
+const SPEEDS = [1, 10, 60];
+const PANES = ['conv', 'board', 'stats', 'patterns', 'agent', 'trace', 'commits', 'search'];
+const EMPTY = [];
+
+const SVG = {
+  todo: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="var(--bg)" stroke="var(--todo)" stroke-width="1.8"/></svg>',
+  doing: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="var(--bg)" stroke="var(--doing)" stroke-width="1.8"/><path d="M8 4.6a3.4 3.4 0 0 1 0 6.8z" fill="var(--doing)"/></svg>',
+  done: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="var(--done)" stroke="var(--done)" stroke-width="1.8"/><path d="M5.2 8.2l2 2 3.8-4.2" fill="none" stroke="var(--bg)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  canceled: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="var(--todo)" stroke="var(--todo)" stroke-width="1.8"/><path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" stroke="var(--bg)" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  play: '<svg viewBox="0 0 14 14" fill="currentColor"><path d="M3.5 2.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L4.4 1.7a.6.6 0 0 0-.9.5z"/></svg>',
+  pause: '<svg viewBox="0 0 14 14" fill="currentColor"><rect x="3" y="2" width="3" height="10" rx=".8"/><rect x="8" y="2" width="3" height="10" rx=".8"/></svg>',
+  open: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5v7M2.5 6h7"/></svg>',
+  person: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6" cy="4.3" r="2"/><path d="M2.6 10.2c.5-1.9 1.8-2.9 3.4-2.9s2.9 1 3.4 2.9" stroke-linecap="round"/></svg>',
+  door: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h4v7H5M2.5 6h4.5M5.5 4.5L7 6 5.5 7.5"/></svg>',
+  chat: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2 3.2c0-.7.5-1.2 1.2-1.2h5.6c.7 0 1.2.5 1.2 1.2v3.6c0 .7-.5 1.2-1.2 1.2H5.4L3 10V8h.2C2.5 8 2 7.5 2 6.8z"/></svg>',
+  close: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7"/></svg>',
+  hash: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4.6 2l-1 8M8.4 2l-1 8M2.2 4.4h8M1.8 7.6h8"/></svg>',
+  file: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M3.3 1.8h4.8l2.6 2.6v7.8H3.3zM8 1.8v2.7h2.7"/></svg>',
+  term: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.2" width="11" height="9.6" rx="1.6"/><path d="M4 5.6l2 1.6-2 1.6M7.6 9h2.4"/></svg>',
+  think: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M5 11.8h4M5.6 9.6c0-1-1.9-1.8-1.9-4a3.3 3.3 0 0 1 6.6 0c0 2.2-1.9 3-1.9 4z"/></svg>',
+  agent: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4.6" cy="5" r="1.9"/><circle cx="9.6" cy="5" r="1.9"/><path d="M1.4 11.6c.4-1.7 1.6-2.6 3.2-2.6s2.8.9 3.2 2.6M7.6 9.4c.5-.3 1.2-.4 2-.4 1.6 0 2.8.9 3.2 2.6"/></svg>',
+  tool: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8.6 2.2a3 3 0 0 0-2.7 4L2.2 9.9a1.3 1.3 0 0 0 1.9 1.9l3.7-3.7a3 3 0 0 0 4-2.7l-1.8 1.1-1.6-.4-.4-1.6z"/></svg>',
+  search: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="6" cy="6" r="3.8"/><path d="M8.8 8.8l3.2 3.2"/></svg>',
+  warn: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><path d="M7 1.8l5.6 9.8H1.4z"/><path d="M7 5.6v2.8M7 10.2v.1"/></svg>',
+  dot: '<svg viewBox="0 0 14 14" fill="currentColor"><circle cx="7" cy="7" r="2"/></svg>',
+};
+
+/* ================= tiny DOM helpers (text only ever goes in via textContent) ================= */
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function box(tag, cls, ...kids) { const e = el(tag, cls); e.append(...kids.filter(k => k != null && k !== false)); return e; }
+function icon(name, cls) { const s = el('span', cls); s.innerHTML = SVG[name]; return s; } // constant markup only
+function link(text, route) { const a = el('a', 'lk', text); a.href = hashOf(route); return a; }
+function $(id) { return document.getElementById(id); }
+const NS = 'http://www.w3.org/2000/svg';
+function sv(tag, o, text) { const e = document.createElementNS(NS, tag); for (const k in o) e.setAttribute(k, o[k]); if (text != null) e.textContent = text; return e; }
+const deps = new Map();
+function changed(view, ...on) {   // whether what a view is painted from is not what it was at its last paint: every memo on the page is one call of this
+  const k = on.join('|');
+  if (deps.get(view) === k) return false;
+  deps.set(view, k);
+  return true;
+}
+
+/* ================= formatting ================= */
+const clockFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+function clock(t) { return clockFmt.format(new Date(t * 1000)); }
+function pad(n) { return String(n).padStart(2, '0'); }
+function long() { return (S.live ? Math.max(present(), S.run?.deadline || 0) : present()) - start() >= 3600; }
+function span(s) {   // a length of time as the page writes it everywhere: h:mm:ss in a run of an hour or more, m:ss in a shorter one
+  s = Math.max(0, Math.floor(s));
+  const m = Math.floor(s / 60);
+  return (long() ? `${Math.floor(m / 60)}:${pad(m % 60)}` : m) + ':' + pad(s % 60);
+}
+function rel(t) { return span(t - start()); }   // a moment, as time into the run
+function stamp(t) { return `${new Date(t * 1000).toLocaleString()} · ${rel(t)} into the run`; }
+function dur(s) {
+  s = Math.max(0, s);
+  if (s < 59.5) return `${Math.round(s)} s`;
+  if (s < 3570) return `${Math.round(s / 60)} min`;
+  return `${Math.floor(s / 3600)} h ${Math.round(s / 60) % 60} min`;
+}
+function num(n) {
+  if (n < 1000) return String(n);
+  if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, '') + 'k';
+  if (n < 1e9) return (n / 1e6).toFixed(n < 1e8 ? 1 : 0).replace(/\.0$/, '') + 'M';
+  return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+}
+function usd(n) { return n == null ? '–' : '$' + (n >= 100 ? Math.round(n).toLocaleString() : n >= 0.1 || !n ? n.toFixed(2) : n >= 0.001 ? n.toFixed(3) : n.toFixed(4)); }
+function spent(x) { return x.unpriced && !x.usd ? '–' : usd(x.usd); }   // x: a tally of model calls; no figure when none of them had a price
+function unpriced(x) { return x.unpriced ? `${plural(x.unpriced, 'call')} without a price` : ''; }
+function pct(a, b) { return Math.round(100 * a / b) + '%'; }
+function plural(n, w, ws = w + 's') { return `${n} ${n === 1 ? w : ws}`; }
+function times(n) { return n === 1 ? 'once' : n === 2 ? 'twice' : n + ' times'; }
+function oneLine(s, n) { return String(s || '').replace(/\s+/g, ' ').trim().slice(0, n); }
+function listed(xs) { return xs.length < 3 ? xs.join(' and ') : xs.slice(0, -1).join(', ') + ' and ' + xs.at(-1); }
+function names(ids) { return listed(ids.map(nameOf)); }
+function fileSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+
+/* ================= store: the feed as it arrives, plus what doesn't depend on the playhead ================= */
+const S = {
+  token: hashParts()[0].trim(),
+  run: null, live: false, skew: 0,
+  ev: [], led: [], off: { log: 0, ledger: 0 },
+  first: Infinity, last: -Infinity,
+  people: new Map(),     // every member ever seen: names and colors don't depend on the playhead
+  byName: new Map(),     // lowercased id or name -> id, as the control plane resolves an @mention
+  order: [],             // everyone in their stable place: agents by arrival, then humans
+  kinds: new Map(),      // conv id -> 'channel' | 'issue', from the event that made it
+  sentAt: new Map(),     // member -> when each of their messages was sent
+  begun: new Map(),      // member -> when each worker start and wake was
+  pushes: [],            // the pushes main took, for the time bar
+  ledDirty: Infinity,    // the lowest ledger index inserted since the last fold
+  loaded: false,         // caught up with the feed once
+  ended: false,
+  T: 0, follow: true, playing: false, speed: 10,
+  route: parseRoute(),   // { view: 'conv' | 'agent', id } | { view: 'board' | 'stats' | 'patterns' | 'commits' }, each with a drawer id or null
+  allDms: false, allClosed: false, allDone: false, allDid: false,
+  reveal: null,          // { id, conv }: a message to scroll to once its conversation is painted
+  head: undefined, commits: null, cidx: new Map(),   // commits: null until the control plane says it serves them, then in main's order, oldest first
+  patches: new Map(),    // a sha as it was asked for -> what /commit said: null while asking, false if it is not a commit on main
+};
+function hashParts() { return location.hash.slice(1).split('/').map(p => { try { return decodeURIComponent(p); } catch { return p; } }); }
+function parseRoute() {   // #TOKEN/c/general[/m12], #TOKEN/board, #TOKEN/stats, #TOKEN/patterns, #TOKEN/commits[/SHA], #TOKEN/agent/ada[/trace][/SHA]
+  const p = hashParts().slice(1);
+  if (p[0] === 'c' && p[1]) return { view: 'conv', id: p[1], drawer: p[2] || null };
+  if (p[0] === 'agent' && p[1]) { const sub = p[2] === 'trace' ? 'trace' : null; return { view: 'agent', id: p[1], sub, drawer: p[sub ? 3 : 2] || null }; }
+  if (PANES.includes(p[0]) && p[0] !== 'search') return { view: p[0], drawer: p[1] || null };
+  return null;
+}
+function hashOf(r) { return '#' + S.token + '/' + [r.view === 'conv' ? 'c' : r.view, r.id, r.sub, r.drawer].filter(Boolean).join('/'); }
+function go(r) { const h = hashOf(r); if (location.hash !== h) location.hash = h; }
+function sel() { return S.route?.view === 'conv' ? S.route.id : null; }
+
+function countUpTo(arr, T, at) {   // how many leading items have at(item) <= T
+  let lo = 0, hi = arr.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (at(arr[m]) <= T) lo = m + 1; else hi = m; }
+  return lo;
+}
+function insertBy(arr, x, at) {   // into a sorted array, after equal keys; returns the index
+  let i = arr.length;
+  while (i > 0 && at(arr[i - 1]) > at(x)) i--;
+  arr.splice(i, 0, x);
+  return i;
+}
+function into(map, k) { let a = map.get(k); if (!a) map.set(k, a = []); return a; }
+function bump(map, k, n = 1) { map.set(k, (map.get(k) || 0) + n); }
+const tOf = x => x, evT = e => e._t, ledT = r => r.at;
+
+function ingest(j) {   // true when rows arrived
+  const n = S.ev.length + S.led.length;
+  S.run = j.run || S.run;
+  S.live = !!j.live;
+  if (typeof j.now === 'number') S.skew = j.now - Date.now() / 1000;
+  let prev = S.ev.length ? S.ev[S.ev.length - 1]._t : -Infinity;
+  for (const e of j.log || []) {
+    if (!e || typeof e !== 'object' || typeof e.at !== 'number') continue;
+    e._t = Math.max(prev, e.at); prev = e._t;   // keep a monotone time for binary search
+    S.ev.push(e);
+    S.first = Math.min(S.first, e.at); S.last = Math.max(S.last, e.at);
+    if (e.type === 'member' && e.member && e.member.id) person(e.member.id, e.member);
+    else if (e.type === 'channel' || e.type === 'issue') S.kinds.set(e.id, e.type);
+    else if (e.type === 'message' && !e.activity) into(S.sentAt, e.author).push(e._t);
+    else if (e.type === 'worker' || e.type === 'woke') into(S.begun, e.member).push(e._t);
+    else if (e.type === 'push' && e.ok && e.ref === MAIN) S.pushes.push(e);
+  }
+  for (const r of j.ledger || []) {
+    if (!r || typeof r.at !== 'number') continue;
+    S.ledDirty = Math.min(S.ledDirty, insertBy(S.led, r, ledT));
+    S.first = Math.min(S.first, r.at); S.last = Math.max(S.last, r.at);
+  }
+  if (j.head !== undefined && j.head !== S.head) { S.head = j.head; if (j.head) loadCommits(); else S.commits = []; }
+  if (j.next) S.off = { log: j.next.log ?? S.off.log, ledger: j.next.ledger ?? S.off.ledger };
+  return S.ev.length + S.led.length > n;
+}
+
+function person(id, m) {
+  let p = S.people.get(id);
+  if (!p) {
+    p = { id, name: id, kind: 'agent', idx: S.order.filter(x => S.people.get(x).kind !== 'human').length };
+    S.people.set(id, p);
+  }
+  for (const k of ['name', 'kind', 'harness', 'model', 'role']) if (m[k]) p[k] = String(m[k]);
+  if (m.operator) p.operator = true;
+  S.byName.set(id.toLowerCase(), id);
+  S.byName.set(p.name.toLowerCase(), id);
+  S.order = [...S.people.keys()].sort((a, b) => {
+    const pa = S.people.get(a), pb = S.people.get(b);
+    return ((pa.kind === 'human') - (pb.kind === 'human')) || pa.idx - pb.idx;
+  });
+}
+function human(id) { return S.people.get(id)?.kind === 'human'; }
+function modelOf(id, m) { return m?.model || S.people.get(id)?.model || ''; }   // what the ledger recorded, else the configured one
+function nameOf(id) { return S.people.get(id)?.name || String(id ?? 'someone'); }
+function colorOf(id) {   // twenty colours picked to tell apart in both themes and to carry an initial, used again past twenty agents; a person is neutral
+  const p = S.people.get(id);
+  return !p || p.kind === 'human' ? 'var(--human)' : `var(--p${p.idx % 20})`;
+}
+function initials(id, two) {
+  const n = nameOf(id).trim() || '?', c = n[0].toUpperCase();
+  if (!two || n.length < 2) return c;
+  for (const p of S.people.values()) if (p.id !== id && (p.name || '').trim()[0]?.toUpperCase() === c) return c + n[1].toLowerCase();
+  return c;
+}
+function avatar(id, size) {
+  const a = el('span', 'av' + (size ? ' s' + size : ''), initials(id, !size || size >= 26));
+  a.style.background = colorOf(id);
+  a.title = nameOf(id) + (S.people.get(id)?.operator ? ', the operator' : '');
+  return a;
+}
+function swatch(c) { const s = el('i', 'sw'); s.style.background = c; return s; }
+function convKind(id) { return id.startsWith('dm:') ? 'dm' : id.startsWith('thread:') ? 'thread' : S.kinds.get(id) || 'channel'; }
+function dmPeople(id) { return id.split(':').slice(1, 3); }   // dm:a:b
+function whoOf(c) { return S.people.has(c.author) ? c.author : S.byName.get(String(c.author).toLowerCase()) || c.author; }   // a commit's author as a member
+
+/* ================= time model ================= */
+function serverNow() { return Date.now() / 1000 + S.skew; }
+function present() {
+  if (!isFinite(S.last)) return 0;
+  return S.live ? Math.max(S.last, serverNow()) : S.last;
+}
+function start() { return isFinite(S.first) ? S.first : 0; }
+function cursor() { return S.follow ? present() : Math.min(Math.max(S.T, start()), present()); }
+
+/* ================= activity: when each agent was at work, inferred from the model calls it made ================= */
+let activeBy = new Map();
+function activity() {   // agent -> [[from, to]]: runs of its model calls under ACTIVE_GAP apart, begun at the worker start or wake just before
+  if (!changed('activity', S.led.length, S.ev.length)) return activeBy;
+  activeBy = new Map();
+  for (const r of S.led) {
+    const a = into(activeBy, r.who), s = a[a.length - 1];
+    if (s && r.at - s[1] < ACTIVE_GAP) s[1] = r.at; else a.push([r.at, r.at]);
+  }
+  for (const [id, ts] of S.begun) {
+    const a = activeBy.get(id) || EMPTY;
+    let i = 0;
+    for (const t of ts) {
+      while (i < a.length && a[i][0] < t) i++;
+      if (i < a.length && a[i][0] - t < ACTIVE_GAP && (!i || a[i - 1][1] < t)) a[i][0] = t;
+    }
+  }
+  return activeBy;
+}
+function spans(id, T) {   // its active stretches as of T; on a live run the last one is open until its calls stop
+  const a = activity().get(id) || EMPTY, out = [];
+  for (let i = 0; i < a.length && a[i][0] <= T; i++) {
+    const open = i === a.length - 1 && S.live && present() - a[i][1] < ACTIVE_GAP;
+    out.push([a[i][0], Math.min(open ? present() : a[i][1], T)]);
+  }
+  return out;
+}
+function working(id, T) {   // since when it has been active, or null; nobody is once the run has ended
+  const s = spans(id, T).pop();
+  return s && s[1] >= T - 1 && (S.live || T < present() - 1) ? s[0] : null;
+}
+function worked(sp) { return sp.reduce((n, s) => n + s[1] - s[0], 0); }
+
+/* ================= fold: the run's state at the playhead, carried forward event by event ================= */
+let D = null;
+function blank() {
+  return {
+    k: 0, kl: 0, board: null, main: null,   // main: the channel everyone starts in, where pushes show
+    members: new Map(),    // id -> what they did up to here
+    channels: new Map(), convs: new Map(), issues: new Map(), jobs: new Map(),
+    sent: new Map(),       // 'from to' -> how many of from's messages were for to: a DM, a reply, a mention, a comment on an issue they follow
+    pend: new Map(),       // member -> the messages that will wake them, until they wake or read them
+    wokeBy: new Map(),     // message id -> who it woke
+    answered: new Map(),   // a DM's id -> seconds until the other side's next message
+    answers: [], dms: 0,
+    notes: [],             // message ids whose wake or answer changed, in order: a painted conversation follows it
+    pushes: [], flow: [],  // flow: [at, to do, doing, done] after each board change
+    msgs: new Map(), nMsgs: 0, all: tally(),   // all: every member's model calls together
+    thread: new Map(),     // message id -> its thread { id: the root's id, conv, items: [the root, ...replies] }
+    counts: { todo: 0, doing: 0, done: 0, canceled: 0 },
+  };
+}
+function tally() { return { calls: 0, tin: 0, cached: 0, tout: 0, usd: 0, unpriced: 0 }; }   // model calls, added up
+function fold(T) {
+  const k = countUpTo(S.ev, T, evT), kl = countUpTo(S.led, T, ledT);
+  if (!D || k < D.k || kl < D.kl || S.ledDirty < D.kl) D = blank();   // a backward seek starts over
+  S.ledDirty = Infinity;
+  while (D.k < k) apply(D, S.ev[D.k++]);
+  while (D.kl < kl) charge(D, S.led[D.kl++]);
+  return D;
+}
+function stat(D, id) {
+  let m = D.members.get(id);
+  if (!m) D.members.set(id, m = { id, sent: 0, direct: 0, wakes: 0, ...tally(), model: '', wokenBy: new Map(), did: [] });
+  return m;
+}
+function conv(D, id) {
+  let c = D.convs.get(id);
+  if (!c) D.convs.set(id, c = { id, kind: convKind(id), items: [], n: 0, pushes: 0, jobs: 0, open: [] });
+  return c;
+}
+function did(D, by, it) { if (S.people.has(by)) stat(D, by).did.push(it); }
+function apply(D, e) {
+  switch (e.type) {
+    case 'member': {
+      if (e.member?.id) stat(D, e.member.id);
+      break;
+    }
+    case 'channel': {
+      const everyone = e.by == null;
+      D.channels.set(e.id, { id: e.id, about: e.about || '', by: e.by, at: e.at, everyone });
+      if (everyone && !D.main) D.main = e.id;
+      const c = conv(D, e.id);
+      if (!everyone) c.items.push({ sys: 'channel', e });
+      break;
+    }
+    case 'join': case 'leave': conv(D, e.id).items.push({ sys: e.type, e }); break;
+    case 'message': {
+      if (!e.conv) break;
+      D.msgs.set(e.id, e);
+      for (const x of e.wakes || EMPTY) into(D.pend, x).push(e);
+      if (e.activity) {   // the prose line the control plane posts after a board change: the change itself is the item
+        if (D.board && D.board.e.id === e.conv) D.board.told = e;
+        D.board = null;
+        break;
+      }
+      const c = conv(D, e.conv), job = e.author === SYSTEM && D.jobs.get(/^@\S+ job (j\d+) /.exec(e.text)?.[1]);
+      if (job) { c.items.push({ sys: 'job', e, job }); c.jobs++; break; }   // a job's result, which the control plane posts
+      const it = { sys: 'msg', e }, p = D.msgs.get(e.reply_to);
+      const th = p && !p.activity && p.conv === e.conv ? D.thread.get(p.id) || { id: p.id, conv: p.conv, items: [{ sys: 'msg', e: p }] } : null;
+      if (th) { D.thread.set(p.id, th); D.thread.set(e.id, th); }
+      (th ? th.items : c.items).push(it);   // a reply goes in its thread
+      c.n++; D.nMsgs++;
+      const st = stat(D, e.author);
+      st.sent++; did(D, e.author, it);
+      const to = new Set((e.wakes || e.mentions || EMPTY).filter(x => S.people.has(x)));   // whoever the control plane delivers it to
+      if (c.kind === 'dm') {
+        dmPeople(e.conv).forEach(x => to.add(x));
+        D.dms++; st.direct++;
+        if (c.open.length && c.open[0].author !== e.author) {   // the other side's next message, after every one it had not yet followed
+          for (const q of c.open) { D.answered.set(q.id, e.at - q.at); D.answers.push({ dt: e.at - q.at, q, a: e }); D.notes.push(q.id); }
+          c.open = [];
+        }
+        c.open.push(e);
+      }
+      if (p) to.add(p.author);
+      to.delete(e.author);
+      for (const x of to) bump(D.sent, e.author + ' ' + x);
+      break;
+    }
+    case 'issue': {
+      const is = { id: e.id, title: e.title || e.id, body: e.body || '', author: e.author, at: e.at,
+        assignees: [...(e.assignees || [])], status: 'todo', since: e.at, hist: [[e.at, 'todo', null]], open: null };
+      D.issues.set(e.id, is);
+      D.counts.todo++;
+      is.open = boardItem(D, e, e.author);
+      break;
+    }
+    case 'assign': {
+      const is = D.issues.get(e.id);
+      if (!is) break;
+      const rm = new Set(e.remove || []);
+      is.assignees = [...is.assignees.filter(a => !rm.has(a)), ...(e.add || []).filter(a => !is.assignees.includes(a))];
+      boardItem(D, e);
+      break;
+    }
+    case 'move': {
+      const is = D.issues.get(e.id);
+      if (!is || !STATUS_LABEL[e.status]) break;
+      D.counts[is.status]--; D.counts[e.status]++;
+      is.status = e.status; is.since = e.at;
+      is.hist.push([e.at, e.status, is.assignees[0] ?? e.by]);
+      boardItem(D, e, e.by);
+      break;
+    }
+    case 'read': {   // read while at work: it will not wake them
+      const q = D.pend.get(e.member);
+      if (q) D.pend.set(e.member, q.filter(m => m.conv !== e.conv || m.seq > e.upto));
+      break;
+    }
+    case 'woke': {
+      const m = stat(D, e.member), q = D.pend.get(e.member) || EMPTY, by = new Set();
+      m.wakes++;
+      for (const x of q) if (x.seq <= e.upto) { into(D.wokeBy, x.id).push(e.member); D.notes.push(x.id); by.add(x.author); }
+      for (const a of by) bump(m.wokenBy, a);
+      D.pend.set(e.member, q.filter(x => x.seq > e.upto));
+      break;
+    }
+    case 'push': {
+      D.pushes.push(e);
+      if (!e.ok || e.ref !== MAIN) break;
+      const it = { sys: 'push', e };
+      if (D.main) { const c = conv(D, D.main); c.items.push(it); c.pushes++; }
+      did(D, e.by, it);
+      break;
+    }
+    case 'job': {
+      D.jobs.set(e.id, { id: e.id, by: e.by, path: e.path, commit: String(e.commit || ''), status: 'queued', outcome: null });
+      if (e.to) conv(D, e.to).items.push({ sys: 'queued', e });
+      break;
+    }
+    case 'claim': case 'cancel': case 'finish': {
+      const j = D.jobs.get(e.id);
+      if (!j) break;
+      if (e.type === 'claim') j.status = 'running';
+      else j.status = e.type === 'cancel' || j.status === 'canceled' ? 'canceled' : e.status;
+      if (e.type === 'finish') j.outcome = e.outcome;
+      break;
+    }
+  }
+}
+function boardItem(D, e, by) {   // by: whose doing it is, on that agent's page
+  const it = D.board = { sys: e.type, e, told: null }, c = D.counts;
+  conv(D, e.id).items.push(it);
+  if (by != null) { did(D, by, it); D.flow.push([e.at, c.todo, c.doing, c.done]); }
+  return it;
+}
+function charge(D, r) {
+  const m = stat(D, r.who), cached = +r.cached || 0, tin = (+r.input || 0) + cached + (+r.written || 0);
+  for (const x of [m, D.all]) { x.calls++; x.tin += tin; x.cached += cached; x.tout += +r.output || 0; x.usd += +r.usd || 0; if (r.usd == null) x.unpriced++; }
+  if (r.model) m.model = r.model;
+}
+function roster(D) { return S.order.filter(id => D.members.has(id)); }
+function agents(D) { return roster(D).filter(id => !human(id)); }
+let mainWas = null;
+function onMain(T) {   // what /commits has of main as of T, which is up to the head the last push before T left it: how many, the agents' share, each author's commits and lines
+  const np = countUpTo(S.pushes, T, evT);
+  if (!changed('main', np)) return mainWas;
+  const cs = S.commits || EMPTY, by = new Map(), all = { n: 0, add: 0, del: 0 };
+  let agents = 0;
+  for (let i = np - 1; i >= 0 && !all.n; i--) all.n = (S.cidx.get(S.pushes[i].new) ?? -1) + 1;   // a head the list lacks: the push before it
+  for (let i = 0; i < all.n; i++) {
+    const id = whoOf(cs[i]), [, add, del] = churn(cs[i]);
+    let x = by.get(id);
+    if (!x) by.set(id, x = { n: 0, add: 0, del: 0 });
+    x.n++; x.add += add; x.del += del; all.add += add; all.del += del;
+    if (S.people.has(id) && !human(id)) agents++;
+  }
+  return mainWas = { by, all, agents, capped: cs.length >= COMMITS_MOST };
+}
+function perCommit(main, usd, id) {   // what a commit on main cost: one agent's, or with no id the agents' together (the seed commit is nobody's work); null when the list is capped
+  const n = id == null ? main.agents : main.by.get(id)?.n;
+  return n && usd && !main.capped ? usd / n : null;
+}
+function atLeast(main, n) { return n + (main.capped ? '+' : ''); }   // a count of commits, which a capped list can only bound
+
+/* ================= conversation names ================= */
+function convTitle(id, D) {
+  const k = convKind(id);
+  if (k === 'dm') return names(dmPeople(id));
+  if (k === 'issue') return D.issues.get(id)?.title || id;
+  return '#' + id;
+}
+
+/* ================= rich text: ``` blocks, `code`, links, @mentions the control plane resolved, issue refs, commit shas ================= */
+const INLINE = /`([^`\n]+)`|(https?:\/\/[^\s<>"'`]+)|(?<![\w@])@([A-Za-z][\w-]*)|\b(i\d+)\b|\b([0-9a-f]{7,40})\b/g;
+function shaRef(sha) {   // a button if /commits listed the sha; loadCommits paints again the ones painted before it knew
+  const n = el(commitOf(sha) ? 'button' : 'span', 'sha', sha);
+  n.dataset.sha = sha;
+  return n;
+}
+function richText(text, mentions, D, mark) {   // mark: the words search puts in <mark>
+  const frag = document.createDocumentFragment(), s = String(text ?? ''), fence = /```[^\n]*\n?([\s\S]*?)(?:\n?```|$)/g;
+  let at = 0, m;
+  while ((m = fence.exec(s))) {
+    if (m.index > at) inline(frag, s.slice(at, m.index).replace(/\n$/, ''), mentions, D, mark);
+    const pre = el('pre'); pre.append(el('code', null, m[1])); frag.append(pre);
+    at = fence.lastIndex;
+    if (s[at] === '\n') at++;
+  }
+  if (at < s.length) inline(frag, s.slice(at), mentions, D, mark);
+  return frag;
+}
+function plain(frag, s, mark) {
+  let at = 0;
+  if (mark) for (const m of s.matchAll(mark)) { frag.append(s.slice(at, m.index), el('mark', null, m[0])); at = m.index + m[0].length; }
+  frag.append(s.slice(at));
+}
+function inline(frag, s, mentions, D, mark) {
+  let at = 0, m;
+  INLINE.lastIndex = 0;
+  while ((m = INLINE.exec(s))) {
+    if (m.index > at) plain(frag, s.slice(at, m.index), mark);
+    let node = m[0];
+    if (m[1] != null) { node = el('code'); node.append(SHA.test(m[1]) ? shaRef(m[1]) : m[1]); }
+    else if (m[2] != null) {
+      const url = m[2].replace(/[.,;:!?)\]]+$/, '');
+      INLINE.lastIndex = m.index + url.length;
+      node = el('a', 'lnk', url); node.href = url; node.target = '_blank'; node.rel = 'noopener noreferrer';
+    } else if (m[3] != null) {
+      const w = m[3].toLowerCase(), id = GROUPS[w] || S.byName.get(w);
+      if (id && mentions && mentions.includes(id)) {
+        node = el('span', GROUPS[w] ? 'mn all' : 'mn', GROUPS[w] ? m[0] : '@' + nameOf(id));
+        node.title = m[0];
+      }
+    } else if (m[5] != null) node = shaRef(m[5]);
+    else if (D.issues.has(m[4])) {
+      node = el('button', 'iref', m[4]);
+      node.dataset.conv = m[4]; node.title = D.issues.get(m[4]).title;
+    }
+    if (typeof node === 'string') plain(frag, node, mark); else frag.append(node);
+    at = INLINE.lastIndex;
+  }
+  if (at < s.length) plain(frag, s.slice(at), mark);
+}
+
+/* ================= sidebar ================= */
+const DM_SHOWN = 6, ISSUES_SHOWN = 8;   // the busiest DMs and the first open issues; the rest behind a toggle or the filter
+function issueNo(id) { return parseInt(id.slice(1)) || 0; }
+function convList(D) {
+  const L = { channel: [], dm: [], issue: [] };
+  for (const c of D.convs.values()) L[c.kind]?.push(c.id);
+  const every = id => D.channels.get(id)?.everyone ? 0 : 1, rank = id => STATUSES.indexOf(D.issues.get(id)?.status);
+  L.channel.sort((a, b) => every(a) - every(b) || a.localeCompare(b));
+  L.dm.sort((a, b) => D.convs.get(b).n - D.convs.get(a).n || a.localeCompare(b));
+  L.issue.sort((a, b) => rank(a) - rank(b) || issueNo(a) - issueNo(b));
+  return L;
+}
+function renderNav(D, T) {
+  const L = convList(D), q = $('filter').value.trim().toLowerCase(), r = S.route, cur = sel();
+  if (q) {
+    const hit = id => (id + ' ' + (convKind(id) === 'dm' ? dmPeople(id).map(nameOf).join(' ') : D.issues.get(id)?.title || '')).toLowerCase().includes(q);
+    for (const k in L) L[k] = L[k].filter(hit);
+  }
+  const ids = agents(D), c = D.counts, nc = S.commits ? onMain(T).all.n : 0;
+  if (!changed('nav', r?.view, r?.id, nc, spent(D.all), D.all.calls > 0, STATUSES.map(s => c[s]), S.allDms, S.allClosed, q, ids.map(id => id + (working(id, T) != null)),
+    ...[...L.channel, ...L.dm, ...L.issue].map(id => id + ':' + D.convs.get(id).n + ':' + (D.issues.get(id)?.status || '') + (D.issues.get(id)?.title || '')))) return;
+  const nav = $('nav'), on = v => r?.view === v && !q;
+  const row = (data, selected, ...kids) => { const b = box('button', 'row' + (selected ? ' sel' : ''), ...kids); Object.assign(b.dataset, data); return b; };
+  const sec = (title, ...rows) => box('div', 'sec', el('div', 'sec-h', title), ...rows);
+  const toggle = (flag, text) => { const b = el('button', 'tog', text); b.dataset.toggle = flag; return b; };
+  const views = [['board', 'Board', c.doing ? `${c.doing} doing` : D.issues.size ? `${c.done} done` : ''], ['stats', 'Cost and tokens', D.all.calls ? spent(D.all) : ''],
+    ['patterns', 'Patterns', ''], S.commits && ['commits', 'Commits', nc ? String(nc) : '']].filter(Boolean);
+  const top = box('div', 'sec', ...views.map(([v, name, meta]) => { const b = row({ route: v }, on(v), el('span', 'lb', name), el('span', 'cnt', meta)); b.classList.add('view'); return b; }));
+  const chans = L.channel.map(id => {
+    const b = row({ conv: id }, id === cur, el('span', 'ic', '#'), el('span', 'lb', id), el('span', 'cnt', String(D.convs.get(id).n || '')));
+    b.title = D.channels.get(id)?.about || id;
+    return b;
+  });
+  const closed = L.issue.filter(id => CLOSED.has(D.issues.get(id).status)), nx = closed.filter(id => D.issues.get(id).status === 'canceled').length;
+  const shown = L.issue.filter((id, i) => q || S.allClosed || id === cur || (i < ISSUES_SHOWN && !closed.includes(id))), rest = L.issue.length - shown.length;
+  const issues = shown.map(id => {
+    const is = D.issues.get(id), b = row({ conv: id }, id === cur, icon(is.status, 'sglyph'), el('span', 'iid', id), el('span', 'lb', is.title));
+    b.title = `${id} · ${STATUS_LABEL[is.status]} · ${is.title}`;
+    return b;
+  });
+  if (!L.issue.length) issues.push(el('div', 'none', q ? 'No match' : 'None yet'));
+  else if (!q && (rest || S.allClosed && L.issue.length > ISSUES_SHOWN - closed.length)) issues.push(toggle('allClosed', S.allClosed ? 'Show fewer'
+    : `${rest} more` + (L.issue.length - closed.length > ISSUES_SHOWN ? '' : nx ? ' closed' : ' done')));
+  const dms = L.dm.filter((id, i) => q || S.allDms || i < DM_SHOWN || id === cur).map(id => {
+    const [a, b] = dmPeople(id);
+    return row({ conv: id }, id === cur, box('span', 'pairs', avatar(a, 16), avatar(b || a, 16)), el('span', 'lb', `${nameOf(a)}, ${nameOf(b)}`), el('span', 'cnt', String(D.convs.get(id).n)));
+  });
+  if (!L.dm.length) dms.push(el('div', 'none', q ? 'No match' : 'None yet'));
+  else if (L.dm.length > DM_SHOWN && !q) { const t = toggle('allDms', S.allDms ? 'Show the busiest' : `${L.dm.length - dms.length} more`); t.style.paddingLeft = '45px'; dms.push(t); }
+  const team = ids.map(id => {
+    const w = working(id, T) != null, b = row({ agent: id }, r?.view === 'agent' && r.id === id && !q, avatar(id, 20), el('span', 'lb', nameOf(id)), el('span', 'ring' + (w ? ' on' : '')));
+    b.title = `${nameOf(id)} · ${w ? 'active' : 'idle'}`;
+    return b;
+  });
+  const held = nav.contains(document.activeElement) && JSON.stringify(document.activeElement.dataset);   // the row the keyboard is on keeps the focus
+  nav.replaceChildren(top, sec('Channels', ...chans), sec('Issues', ...issues), sec('Direct messages', ...dms), sec('Agents', ...team));
+  if (held) [...nav.querySelectorAll('button')].find(b => JSON.stringify(b.dataset) === held)?.focus();
+}
+
+/* ================= a conversation, painted into a scroller: appended as the playhead moves ================= */
+function convView(sc, list) { return { sc, box: list, id: null, n: 0, first: 0, lastE: null, st: null, nodes: new Map(), mids: new Map(), introKey: '', intro: null, more: null, ghost: null,
+  D: null, noteAt: 0, thr: new Map(), thrDr: null }; }   // mids: message id -> its row; thr: root id -> the reply count on its button
+const mainView = convView($('convPane'), $('msgs')), drawerView = convView($('dScroller'), $('dMsgs'));
+function itemsOf(id, D) { return (convKind(id) === 'thread' ? D.thread.get(id.slice(7)) : D.convs.get(id))?.items || EMPTY; }
+function atBottom(sc) { return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80; }
+function paintConv(v, id, D, stick) {
+  const items = itemsOf(id, D), bottom = atBottom(v.sc), fresh = v.id !== id;
+  let grew = false;
+  if (fresh || items.length < v.n || (v.n && items[v.n - 1].e !== v.lastE)) {
+    v.id = id; v.box.textContent = ''; v.nodes.clear(); v.mids.clear(); v.introKey = ''; v.D = null;
+    v.intro = el('div'); v.more = el('button', 'more'); v.ghost = el('div', 'ghost');
+    v.box.append(v.intro, v.more);
+    v.first = Math.max(0, items.length - CAP); v.n = v.first;
+    v.st = { prev: null, at: 0 };
+    grew = true;
+  }
+  if (items.length > v.n) {
+    v.box.append(rows(v, items, D, v.n, items.length, v.st));
+    v.n = items.length; grew = true;
+    if (v.n - v.first > CAP * 1.5 && bottom) trim(v, items, v.n - CAP);
+  }
+  v.lastE = v.n ? items[v.n - 1].e : null;
+  const ik = introKey(id, D);
+  if (ik !== v.introKey) { const n = intro(id, D); v.intro.replaceWith(n); v.intro = n; v.introKey = ik; grew = true; }
+  v.more.hidden = !v.first;
+  v.more.textContent = `Show ${plural(v.first, 'earlier item')}`;
+  const quiet = !items.some(it => it.sys !== 'channel' && it.sys !== 'issue');
+  if (quiet && !v.ghost.isConnected) { v.ghost.textContent = convKind(id) === 'issue' ? 'No comments on this issue yet.' : 'Nothing here yet at this point in the run.'; v.box.append(v.ghost); }
+  else if (!quiet) v.ghost.remove();
+  decorate(v, D);
+  if (grew && (fresh || stick || bottom)) v.sc.scrollTop = v.sc.scrollHeight;
+}
+function noteText(id, D) {   // what the log says came of a message: who it woke, and how soon the other side of a DM wrote next
+  const w = D.wokeBy.get(id), a = D.answered.get(id);
+  return [w && 'Woke ' + names(w), a != null && `The other side’s next message came ${dur(a)} later`].filter(Boolean).join(' · ');
+}
+function note(row, id, D) {
+  const t = noteText(id, D), mc = row.querySelector('.mc');
+  let p = mc.querySelector('.pill');
+  if (!t) return p?.remove();
+  if (!p) mc.append(p = el('div', 'pill'));
+  p.textContent = t;
+}
+function decorate(v, D) {   // under a message: its pill, and a button for its replies; a new fold or drawer repaints them all
+  const dr = S.route.drawer;
+  if (v.D !== D || v.thrDr !== dr) {
+    v.D = D; v.thrDr = dr; v.thr.clear();
+    for (const b of v.box.querySelectorAll('.thr')) b.remove();
+    for (const [id, row] of v.mids) note(row, id, D);
+  } else for (let i = v.noteAt; i < D.notes.length; i++) { const row = v.mids.get(D.notes[i]); if (row) note(row, D.notes[i], D); }
+  v.noteAt = D.notes.length;
+  for (const [id, th] of D.thread) {
+    const n = th.items.length - 1, row = v.mids.get(id);
+    if (id !== th.id || th.conv !== v.id || v.thr.get(id) === n || !row) continue;
+    v.thr.set(id, n);
+    let b = row.querySelector('.thr');
+    if (!b) { b = el('button', 'thr'); b.dataset.drawer = id; row.querySelector('.mc').append(b); }
+    b.textContent = `${plural(n, 'reply', 'replies')} · last at ${rel(th.items[n].e.at)}`;
+    b.classList.toggle('sel', dr === id);
+  }
+}
+function minutesIn(t) { const m = Math.round((t - start()) / 60); return m < 1 ? 'The start of the run' : m < 120 ? `${plural(m, 'minute')} in` : `${rel(t)} in`; }
+function rows(v, items, D, a, b, st) {
+  const frag = document.createDocumentFragment(), k = convKind(v.id);
+  for (let i = a; i < b; i++) {
+    const it = items[i], e = it.e;
+    if (st.at && e.at - st.at > DIVIDER_GAP) { frag.append(el('div', 'divider', minutesIn(e.at))); st.prev = null; }
+    st.at = e.at;
+    let r;
+    if (it.sys === 'msg') {
+      const p = st.prev;
+      r = messageRow(e, p && p.author === e.author && e.at - p.at < GROUP_GAP, D, k);
+      st.prev = e;
+    } else { r = it.sys === 'push' ? pushRow(e) : it.sys === 'job' ? jobRow(it) : sysRow(it, D); st.prev = null; }
+    if (r.dataset.mid) { v.mids.set(r.dataset.mid, r); note(r, r.dataset.mid, D); }
+    v.nodes.set(i, r);
+    frag.append(r);
+  }
+  return frag;
+}
+function earlier(v) {
+  if (!v.first || !D) return;
+  const a = Math.max(0, v.first - 300), h = v.sc.scrollHeight;
+  v.more.after(rows(v, itemsOf(v.id, D), D, a, v.first, { prev: null, at: 0 }));
+  v.first = a; v.D = null;
+  v.sc.scrollTop += v.sc.scrollHeight - h;
+  schedule();
+}
+function trim(v, items, first) {
+  const stop = v.nodes.get(first);
+  while (v.more.nextSibling && v.more.nextSibling !== stop) v.more.nextSibling.remove();
+  for (let i = v.first; i < first; i++) { v.nodes.delete(i); v.mids.delete(items[i].e.id); }
+  v.first = first;
+}
+function head(title, sub, right, lead, mono) {   // the pane's header: strings, or for `right` a node
+  if (!changed('head', title, sub, right?.textContent ?? right, lead?.title, lead?.className, mono)) return;
+  $('headMain').replaceChildren(...[lead, el('h1', null, title), mono && el('span', 'hmono', mono), sub && el('span', 'hsub', sub)].filter(Boolean));
+  $('headRight').replaceChildren(right || '');
+}
+function statusIcon(s) { const i = icon(s, 'sglyph'); i.title = STATUS_LABEL[s]; return i; }
+function renderHead(id, D) {
+  const k = convKind(id), is = D.issues.get(id), ch = D.channels.get(id), c = D.convs.get(id) || { n: 0 };
+  if (k === 'channel') {
+    const sub = [ch?.about, id === D.main && 'Pushes to main and job results post here.'].filter(Boolean).join(' ');
+    head('# ' + id, sub, [plural(c.n, 'message'), c.pushes && plural(c.pushes, 'push', 'pushes'), c.jobs && plural(c.jobs, 'job')].filter(Boolean).join(' · '));
+  } else if (k === 'dm') head(names(dmPeople(id)), 'Direct messages', plural(c.n, 'message'));
+  else head(is ? is.title : id, is ? `${id} · ${is.assignees.length ? names(is.assignees) : 'unassigned'}` : id, plural(c.n, 'comment'), is && statusIcon(is.status));
+}
+function statusPill(s) { return box('span', 'st st-' + s, icon(s), STATUS_LABEL[s] || s); }
+function introKey(id, D) {
+  const is = D.issues.get(id);
+  return [id, is ? is.status + is.assignees : '', D.channels.has(id)].join('|');
+}
+function intro(id, D) {
+  const k = convKind(id), ch = D.channels.get(id);
+  if (k === 'thread') return el('div');
+  if (k === 'dm') return el('div', 'intro', `The private thread between ${names(dmPeople(id))}. You are reading along; nobody here can see you.`);
+  if (k === 'channel') return el('div', 'intro', !ch ? '' : ch.everyone ? 'The starting channel, with everyone in it.' : `Created by ${nameOf(ch.by)} at ${rel(ch.at)}.`);
+  const is = D.issues.get(id);
+  if (!is) return el('div', 'ghost', 'This issue has not been opened yet at this point in the run.');
+  const meta = box('div', 'im', statusPill(is.status), el('span', 'iid', id), '· opened by', el('b', null, nameOf(is.author)), `at ${rel(is.at)} ·`,
+    is.assignees.length ? 'assigned to' : 'unassigned', is.assignees.length ? el('b', null, names(is.assignees)) : null);
+  const c = box('div', 'icard', meta);
+  if (is.body) { const b = el('div', 'ib'); b.append(richText(is.body, is.open?.told?.mentions, D)); c.append(b); }
+  return c;
+}
+const SYS = {   // a line in a conversation that isn't a message: [who, icon, what]
+  channel: e => [e.by, 'hash', ` created #${e.id}`],
+  join: e => [e.member, 'door', convKind(e.id) === 'issue' ? ' started following this issue' : ` joined #${e.id}`],
+  leave: e => [e.member, 'door', convKind(e.id) === 'issue' ? ' stopped following this issue' : ` left #${e.id}`],
+  issue: e => [e.author, 'open', ' opened this issue'],
+  assign: e => {
+    const add = e.add || [], rm = e.remove || [];
+    if (add.length === 1 && add[0] === e.by && !rm.length) return [e.by, 'person', ' took this issue'];
+    return [e.by, 'person', ' ' + [add.length && 'assigned ' + names(add), rm.length && 'unassigned ' + names(rm)].filter(Boolean).join(', ')];
+  },
+  move: e => [e.by, 'dot', [' moved this to ', statusPill(e.status)]],
+  queued: e => [e.by, 'term', ` asked for job ${e.id}: harbor on ${e.path} at ${String(e.commit).slice(0, 7)}`],
+};
+function sysRow(it, D) {
+  const e = it.e, [by, ic, what] = SYS[it.sys](e), t = el('time', null, rel(e.at));
+  t.title = stamp(e.at);
+  const body = box('div', 'abody', el('span', 'who', nameOf(by)), ...[what].flat(), t);
+  if (it.sys === 'move' && e.note) { const n = el('span', 'note'); n.append(richText(e.note, it.told?.mentions, D)); body.append(n); }
+  return box('div', 'act', box('div', 'aic', icon(ic)), body);
+}
+function shell(by, at, verb, cont) {   // a row of a conversation: avatar, name, time, what it was, and room for the rest
+  const r = el('div', 'msg' + (cont ? ' cont' : '')), mc = el('div', 'mc'), mh = el('div', 'mh'), t = el('time', null, rel(at));
+  t.title = stamp(at);
+  mh.append(el('span', 'nm', nameOf(by)), t);
+  if (verb) mh.append(el('span', 'verb', verb));
+  if (!cont) mc.append(mh);
+  r.append(box('div', 'gut', cont ? el('span', 'gtime', rel(at)) : avatar(by)), mc);
+  return [r, mc, mh];
+}
+function attach(mc, files) {   // shared files: each downloads with the view token
+  for (const f of files || EMPTY) {
+    const b = el('button', 'att', `${f.name} · ${fileSize(f.size)}`);
+    b.title = 'Download ' + f.id;
+    b.onclick = () => fetch('files/' + f.id, { headers: { Authorization: 'Bearer ' + S.token } })
+      .then(r => r.ok ? r.blob() : Promise.reject(r.status))
+      .then(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = f.name; a.click(); });
+    mc.append(b);
+  }
+}
+function messageRow(e, cont, D, k, withConv, mark) {   // k: the kind of the conversation it is painted in; withConv: say where it was posted
+  const [r, mc, mh] = shell(e.author, e.at, '', cont), ms = e.mentions || EMPTY;
+  r.dataset.mid = e.id;
+  if (withConv) {
+    const ck = convKind(e.conv), b = el('button', 'ctx', ck === 'dm' ? 'DM' : ck === 'issue' ? e.conv : '#' + e.conv);
+    b.dataset.jump = e.id; b.title = 'Open it in ' + convTitle(e.conv, D);
+    mh.append(b);
+  }
+  const tx = el('div', 'tx'), text = String(e.text || '');
+  tx.append(richText(text, ms, D, mark));
+  mc.append(tx);
+  if (text.length > 1200 || text.split('\n').length > 18) { tx.classList.add('clamp'); mc.append(el('button', 'more-tx', 'Show more')); }
+  attach(mc, e.files);
+  return r;
+}
+function pushed(old, sha) {   // what a push from old to sha put on main, where /commits has it: its newest commit, how many commits, and their lines
+  const c = commitOf(sha), hi = c && S.cidx.get(c.sha);
+  if (hi == null) return { c };
+  const lo = S.cidx.get(old) ?? (/^0+$/.test(old) ? -1 : hi - 1);
+  let add = 0, del = 0;
+  for (let i = lo + 1; i <= hi; i++) { const x = churn(S.commits[i]); add += x[1]; del += x[2]; }
+  return { c, n: hi - lo, add, del };
+}
+function fillPush(b) {   // again once /commits has answered
+  const sha = b.dataset.drawer, { c, n, add, del } = pushed(b.dataset.old, sha);
+  b.replaceChildren(el('span', 'csha', sha.slice(0, 7)), el('span', 'what', c ? (c.subject || '(no subject)') + (n > 1 ? ` and ${plural(n - 1, 'commit')} before it` : '') : ''));
+  if (n) b.append(el('span', 'add', '+' + add), el('span', 'del', '−' + del));
+}
+function pushRow(e) {
+  const [r, mc] = shell(e.by, e.at, 'pushed to main'), b = el('button', 'qcard push');
+  b.dataset.old = e.old; b.dataset.drawer = e.new; b.title = 'Open the patch';
+  fillPush(b);
+  mc.append(b);
+  return r;
+}
+function jobResult(j) {
+  const o = j.outcome || {};
+  return j.status === 'done' ? o.headline || 'done' : j.status === 'failed' ? 'failed' + (o.error ? ': ' + oneLine(o.error.split('\n')[0], 120) : '') : j.status;
+}
+function jobRow(it) {
+  const j = it.job, [r, mc] = shell(j.by, it.e.at, 'job finished');
+  r.dataset.mid = it.e.id;
+  mc.append(box('div', 'qcard job ' + j.status, el('span', 'what', `${j.id} · harbor on ${j.path} at ${j.commit.slice(0, 7)}`), el('span', 'res', jobResult(j))));
+  attach(mc, it.e.files);
+  return r;
+}
+
+/* ================= shared parts of the pages ================= */
+function kv(pairs) {   // numbers in a row, each over its label
+  const g = el('div', 'kv');
+  g.style.setProperty('--n', pairs.length);
+  for (const [v, k] of pairs) g.append(box('div', null, el('b', null, v), el('span', null, k)));
+  return g;
+}
+function meter(frac, color) {
+  const m = box('div', 'meter', el('i'));
+  m.firstChild.style.width = (100 * Math.max(0, Math.min(1, frac))).toFixed(1) + '%';
+  if (color) m.firstChild.style.background = color;
+  return m;
+}
+function tile(k, v, s) { return box('div', 'tile', el('div', 'k', k), el('div', 'v', v), el('div', 's', s || ' ')); }
+function section(cls, title, ...kids) { return box('section', cls, el('h2', null, title), ...kids); }
+function who(id, size) { return box('span', 'nm', avatar(id, size), nameOf(id)); }
+function timeAxis(svg, x0, x1, y, T) {   // four labels along a chart whose right edge is the playhead
+  for (let i = 0; i <= 3; i++) svg.append(sv('text', { x: x0 + (x1 - x0) * i / 3, y, 'text-anchor': i === 3 ? 'end' : i ? 'middle' : 'start', class: i === 3 ? 'now' : '' }, rel(start() + (T - start()) * i / 3)));
+}
+function tick(T) { return Math.round((T - start()) / Math.max(1, (present() - start()) / 600)); }   // the playhead in steps a chart can show
+
+/* ================= beside a conversation: spend, who is at work, the board ================= */
+function renderRail(D, T) {
+  const ids = agents(D), active = ids.map(id => working(id, T) != null), c = D.counts, budget = +S.run?.budget || 0, a = D.all;
+  if (!changed('rail', D.kl, ids, active, STATUSES.map(s => c[s]), budget)) return;
+  const spend = section(null, 'Spend', box('div', 'big', el('b', null, spent(a)), budget ? el('span', null, 'of ' + usd(budget)) : null));
+  if (budget) spend.append(meter(a.usd / budget));
+  if (a.unpriced) spend.append(el('div', 'cap', unpriced(a)));
+  spend.append(a.calls ? kv([[num(a.tin), 'tokens in'], [num(a.tout), 'tokens out'], [a.tin ? pct(a.cached, a.tin) : '–', 'from cache']]) : el('div', 'none', 'No model calls yet at this point in the run.'),
+    link('Cost and tokens by agent', { view: 'stats' }));
+  const now = section(null, 'Agents right now', ...ids.map((id, i) => {
+    const b = box('button', 'now', avatar(id, 26), box('span', null, el('span', 'nm', nameOf(id)), box('span', 'stt', el('i', 'dot' + (active[i] ? ' on' : '')), active[i] ? 'active' : 'idle')),
+      el('span', 'usd', spent(D.members.get(id))));
+    b.dataset.agent = id;
+    return b;
+  }));
+  const bar = el('div', 'stackbar'), colors = { done: 'var(--done)', doing: 'var(--doing-fill)', todo: 'var(--todo)', canceled: 'var(--quiet)' }, order = ['done', 'doing', 'todo', 'canceled'];
+  for (const s of order) if (c[s]) { const x = el('span'); x.style.flex = c[s]; x.style.background = colors[s]; bar.append(x); }
+  const board = section(null, 'Board', ...(D.issues.size ? [bar, kv(order.map(s => [String(c[s]), STATUS_LABEL[s].toLowerCase()]))] : [el('div', 'none', 'No issues yet at this point in the run.')]),
+    link('Open the board', { view: 'board' }));
+  $('rail').replaceChildren(spend, now, board);
+}
+
+/* ================= the board: issues by status, and how they moved ================= */
+const DONE_SHOWN = 50, LIVES = 150;
+function median(xs) { xs = [...xs].sort((a, b) => a - b); const m = xs.length >> 1; return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2; }
+function renderBoard(D, T) {
+  const c = D.counts, all = [...D.issues.values()], done = all.filter(is => is.status === 'done'), pane = $('boardPane');
+  head('Board', 'as it stood at ' + rel(T), [plural(all.length, 'issue'), `${c.done} done`, done.length && `median ${dur(median(done.map(is => is.since - is.at)))} from open to done`].filter(Boolean).join(' · '));
+  if (!all.length) {
+    if (changed('board', 'none')) pane.replaceChildren(el('div', 'ghost', 'No issues yet at this point in the run. Agents open issues to split up the work, and they show here as they move.'));
+    return;
+  }
+  if (!pane.querySelector('.board')) { pane.replaceChildren(box('div', 'board', el('div', 'blist'), el('aside', 'bside'))); deps.delete('board'); deps.delete('flow'); }
+  const [list, side] = pane.firstChild.children;
+  if (changed('board', D.k, S.allDone)) {
+    list.replaceChildren(...STATUSES.map(s => {
+      const these = all.filter(is => is.status === s).sort(CLOSED.has(s) ? (a, b) => b.since - a.since : (a, b) => issueNo(a.id) - issueNo(b.id));
+      if (!these.length) return null;
+      const g = box('section', null, box('div', 'gh', statusIcon(s), STATUS_LABEL[s], el('span', 'n', String(these.length))));
+      for (const is of s === 'done' && !S.allDone ? these.slice(0, DONE_SHOWN) : these) {
+        const a = is.assignees, b = box('button', 'irow', statusIcon(s), el('span', 'iid', is.id), el('span', 'ttl', is.title),
+          a.length ? box('span', 'who', avatar(a[0], 20), el('span', null, nameOf(a[0]) + (a.length > 1 ? ` +${a.length - 1}` : ''))) : el('span', 'who', 'unassigned'),
+          el('span', 'when', (s === 'todo' ? 'opened ' : 'moved ') + rel(is.since)));
+        b.dataset.conv = is.id; b.title = `${is.id} · ${is.title}`;
+        g.append(b);
+      }
+      if (s === 'done' && these.length > DONE_SHOWN) { const t = el('button', 'tog', S.allDone ? `Show the latest ${DONE_SHOWN}` : `Show all ${these.length} done`); t.dataset.toggle = 'allDone'; g.append(t); }
+      return g;
+    }).filter(Boolean));
+  }
+  if (changed('flow', D.k, tick(T))) {
+    const legend = box('div', 'key', ...[['Done', 'var(--done)'], ['Doing', 'var(--doing-fill)'], ['To do', 'var(--todo-fill)']].map(([n, col]) => box('span', null, swatch(col), n)));
+    const shown = all.slice(-LIVES);
+    side.replaceChildren(section(null, 'How the board moved', flowChart(D, T), legend),
+      section(null, 'Each issue’s life', ...shown.map(is => life(is, T, all.length > 24)),
+        el('div', 'cap', (all.length > LIVES ? `The latest ${LIVES} issues. ` : '') + 'Thick bar in an agent’s colour: that agent had it in progress. Thin grey: waiting. Thin green: done.')));
+  }
+}
+function flowChart(D, T) {   // stacked steps of done, doing and to do, from the start to the playhead
+  const t0 = start(), w = Math.max(1, T - t0), X = t => 28 + 384 * Math.min(1, Math.max(0, (t - t0) / w));
+  const max = Math.max(1, ...D.flow.map(f => f[1] + f[2] + f[3])), Y = n => 150 - n / max * 140;
+  const svg = sv('svg', { viewBox: '0 0 420 180', class: 'chart', role: 'img', 'aria-label': 'Issues to do, doing and done over the run so far' });
+  const area = (val, fill) => { let d = 'M28 150'; for (const f of D.flow) d += `H${X(f[0]).toFixed(1)}V${Y(val(f)).toFixed(1)}`; svg.append(sv('path', { d: d + 'H412V150Z', fill })); };
+  area(f => f[1] + f[2] + f[3], 'var(--todo-fill)'); area(f => f[2] + f[3], 'var(--doing-fill)'); area(f => f[3], 'var(--done)');
+  svg.append(sv('line', { x1: 412, y1: 8, x2: 412, y2: 150, class: 'nowl' }), sv('text', { x: 22, y: 14, 'text-anchor': 'end' }, max), sv('text', { x: 22, y: 150, 'text-anchor': 'end' }, 0));
+  timeAxis(svg, 28, 412, 168, T);
+  return svg;
+}
+function life(is, T, tight) {   // one issue's bar: a segment for each status it has been in
+  const t0 = start(), w = Math.max(1, T - t0), bar = el('span'), b = box('button', 'life', el('span', 'iid', is.id), bar);
+  is.hist.forEach(([t, s, by], k) => {
+    const end = is.hist[k + 1]?.[0] ?? T, i = el('i', s);
+    i.style.left = ((t - t0) / w * 100).toFixed(2) + '%';
+    i.style.width = ((end - t) / w * 100).toFixed(2) + '%';
+    if (s === 'doing') i.style.background = colorOf(by);
+    i.title = `${STATUS_LABEL[s]} from ${rel(t)}` + (s === 'doing' ? ` · ${nameOf(by)}` : '');
+    bar.append(i);
+  });
+  b.dataset.conv = is.id; b.title = `${is.id} · ${is.title}`;
+  if (tight) b.style.setProperty('--lh', '16px');
+  return b;
+}
+
+/* ================= cost and tokens ================= */
+function niceTop(v) { const p = 10 ** Math.floor(Math.log10(v || 1)); return [1.5, 3, 6, 9, 15].find(m => v <= m * p * 1.0001) * p; }   // a chart's top, three even steps up
+function renderStats(D, T) {
+  head('Cost and tokens', 'everything up to ' + rel(T));
+  const main = onMain(T), a = D.all, each = perCommit(main, a.usd);
+  if (!changed('stats', D.k, D.kl, main.all.n, tick(T))) return;
+  const ms = agents(D).map(id => D.members.get(id)).sort((x, y) => y.usd - x.usd), budget = +S.run?.budget || 0, jobs = [...D.jobs.values()];
+  const jobsBy = ['done', 'failed', 'canceled', 'running', 'queued'].map(s => [jobs.filter(j => j.status === s).length, s]).filter(x => x[0]).map(x => x.join(' ')).join(', ');
+  const tiles = box('div', 'tiles',
+    tile('Spent', spent(a), [budget && `of ${usd(budget)} budget`, unpriced(a)].filter(Boolean).join(' · ')),
+    tile('Tokens in', num(a.tin), a.tin ? `${pct(a.cached, a.tin)} read from cache` : ''),
+    tile('Tokens out', num(a.tout), plural(a.calls, 'model call')),
+    tile('Commits', S.commits ? atLeast(main, main.all.n) : '–', !S.commits ? 'nothing on main yet' : main.capped ? `main’s latest ${COMMITS_MOST}` : `+${main.all.add} −${main.all.del} lines`),
+    tile('Cost per commit', usd(each), each != null ? `over the agents’ ${plural(main.agents, 'commit')}` : ''),
+    tile('Jobs', String(jobs.length), jobsBy || 'none asked for'));
+  if (!a.calls) return $('statsPane').replaceChildren(box('div', 'page', tiles, el('div', 'none', 'No model calls yet at this point in the run. Once agents call a model, their spend and tokens show here.')));
+  const paid = ms.filter(m => m.usd > 0), top = paid[0];
+  const said = [];   // sentences the numbers support
+  if (paid.length > 1) said.push(`${nameOf(top.id)} spent the most: ${usd(top.usd)}, ${pct(top.usd, a.usd)} of the run.`);
+  const pc = ms.map(m => [m, perCommit(main, m.usd, m.id)]).filter(x => x[1] != null).sort((x, y) => x[1] - y[1]);
+  if (pc.length > 1) said.push(`Per commit, ${nameOf(pc[0][0].id)} cost the least (${usd(pc[0][1])}) and ${nameOf(pc.at(-1)[0].id)} the most (${usd(pc.at(-1)[1])}).`);
+  const bars = box('div', 'bars', ...paid.flatMap(m => [el('span', 'nm', nameOf(m.id)), meter(m.usd / top.usd, colorOf(m.id)), el('span', 'n', usd(m.usd))]));
+  const charts = box('div', 'split',
+    section('g3', 'Spend over the run, by agent', ...(paid.length ? [spendChart(D, T, paid), box('div', 'key', ...paid.map(m => box('span', null, swatch(colorOf(m.id)), nameOf(m.id))))]
+      : [el('div', 'none', 'None of these calls has a price, so there is no spend to draw.')])),
+    section('g2', 'Where the money went', paid.length ? bars : el('div', 'none', 'No priced calls yet.'), said.length ? el('div', 'cap', said.join(' ')) : null));
+  const row = (name, model, t, n, per) => box('tr', null, box('th', null, name), el('td', 'mono', model), ...[el('b', null, spent(t)), num(t.tin), t.tin ? pct(t.cached, t.tin) : '–',
+    num(t.tout), t.calls.toLocaleString(), atLeast(main, n || 0), usd(per)].map(v => box('td', null, v)));   // t: a tally of model calls
+  const table = box('table', 'tbl', box('thead', null, box('tr', null, ...['Agent', 'Model', 'Spent', 'Tokens in', 'Cached', 'Tokens out', 'Calls', 'Commits', 'Per commit'].map(h => el('th', null, h)))),
+    box('tbody', null, ...ms.map(m => {
+      const tr = row(box('button', null, who(m.id, 22)), modelOf(m.id, m), m, main.by.get(m.id)?.n, perCommit(main, m.usd, m.id));
+      tr.dataset.agent = m.id;
+      return tr;
+    })),
+    box('tfoot', null, row('Whole run', '', a, main.agents, each)));
+  $('statsPane').replaceChildren(box('div', 'page', tiles, charts, section(null, 'By agent', box('div', 'ox', table),
+    el('div', 'cap', 'Cached is the share of tokens in that the provider read from its cache. Commits are each agent’s own on main.'))));
+}
+function spendChart(D, T, ms) {   // each agent's spend so far, stacked, the biggest spender at the bottom
+  const N = 96, t0 = start(), w = Math.max(1e-9, T - t0), at = new Map(ms.map((m, i) => [m.id, i])), cum = ms.map(() => new Float64Array(N + 1));
+  for (let i = 0; i < D.kl; i++) { const r = S.led[i], a = at.get(r.who); if (a != null && r.usd) cum[a][Math.max(0, Math.min(N, Math.ceil((r.at - t0) / w * N)))] += r.usd; }
+  const top = niceTop(D.all.usd), X = j => (52 + 580 * j / N).toFixed(1), Y = v => (190 - v / top * 180).toFixed(1), base = new Float64Array(N + 1);
+  const svg = sv('svg', { viewBox: '0 0 640 220', class: 'chart', role: 'img', 'aria-label': `Cumulative spend by agent, reaching ${usd(D.all.usd)} at ${rel(T)}` });
+  for (let i = 0; i <= 3; i++) {
+    const y = 190 - 60 * i;
+    svg.append(sv('line', { x1: 52, y1: y, x2: 632, y2: y, class: i ? 'gl' : 'ax' }), sv('text', { x: 46, y: y + 4, 'text-anchor': 'end' }, usd(top * i / 3).replace(/\.00$/, '')));
+  }
+  ms.forEach((m, a) => {
+    let up = '', down = '', run = 0;
+    for (let j = 0; j <= N; j++) { run += cum[a][j]; down = `L${X(j)} ${Y(base[j])}` + down; base[j] += run; up += `${j ? 'L' : 'M'}${X(j)} ${Y(base[j])}`; }
+    svg.append(sv('path', { d: up + down + 'Z', fill: colorOf(m.id) }));
+  });
+  timeAxis(svg, 52, 632, 210, T);
+  return svg;
+}
+
+/* ================= patterns: who was at work when, who messages whom, how fast DMs are answered ================= */
+const STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 86400], COLUMNS = 36;
+const ANSWER = [[60, 'under 1 min'], [120, '1 to 2'], [300, '2 to 5'], [600, '5 to 10'], [Infinity, 'over 10']];
+function shade(b, v) {   // v from 0 to 1; never so deep that the number on it is hard to read
+  b.style.backgroundColor = `color-mix(in srgb, var(--accent) ${Math.round(14 + 42 * Math.sqrt(v))}%, var(--cell))`;
+}
+function seated(ids, w) {   // an order that puts the members who exchange the most next to each other
+  const left = new Set(ids), out = [];
+  let best = null, most = 0;
+  for (const a of ids) for (const b of ids) if (a < b && w(a, b) > most) { most = w(a, b); best = [a, b]; }
+  if (!best) return ids;
+  for (const x of best) { out.push(x); left.delete(x); }
+  while (left.size) {
+    let pick = null, pw = -1, front = false;
+    for (const x of left) { const h = w(x, out[0]), t = w(x, out.at(-1)); if (Math.max(h, t) > pw) { pw = Math.max(h, t); pick = x; front = h > t; } }
+    if (front) out.unshift(pick); else out.push(pick);
+    left.delete(pick);
+  }
+  return out;
+}
+function leader(label, vals, fmt) {   // vals: [id, value]; whoever has the most, and everyone who does when it is a tie
+  const most = Math.max(0, ...vals.map(v => v[1])), ids = vals.filter(v => most && v[1] === most).map(v => v[0]);
+  return [el('span', 'cap', label), el('span', 'cap tnum', most ? fmt(most) : ''),
+    ids.length ? box('span', 'who', ...ids.flatMap(id => [avatar(id, 22), nameOf(id)])) : el('span', 'none', 'Nobody yet')];
+}
+function renderPatterns(D, T) {
+  head('Patterns', 'how the team worked together, up to ' + rel(T));
+  const main = onMain(T), t0 = start(), len = Math.max(1, T - t0), per = STEPS.find(s => len / s <= COLUMNS) || Math.ceil(len / COLUMNS), n = Math.max(1, Math.ceil(len / per));
+  if (!changed('patterns', D.k, D.kl, main.all.n, per, n)) return;   // per: the seconds in a square of the grid
+  const ids = roster(D), ags = agents(D);
+  const sp = new Map(ids.map(id => [id, spans(id, T)]));
+  // who was busy when
+  const busy = el('div');
+  busy.style.minWidth = 76 + n * 16 + 'px';
+  for (const id of ids) {
+    const row = box('div', 'heat', el('span', 'nm', nameOf(id))), sent = S.sentAt.get(id) || EMPTY, col = colorOf(id);
+    row.style.cssText = `--n:${n};--ch:${ids.length > 10 ? 20 : 30}px;margin-bottom:4px`;
+    for (let k = 0; k < n; k++) {
+      const a = t0 + k * per, b = Math.min(a + per, T), f = Math.min(1, sp.get(id).reduce((x, s) => x + Math.max(0, Math.min(s[1], b) - Math.max(s[0], a)), 0) / Math.max(1, b - a));
+      const m = countUpTo(sent, b, tOf) - countUpTo(sent, a, tOf) + (k ? 0 : countUpTo(sent, a, tOf)), c = el('span', 'c'), size = Math.min(13, 4 + 3 * m);
+      if (f > 0) c.style.background = `color-mix(in srgb, ${col} ${Math.round(22 + 78 * f)}%, var(--bg))`;
+      if (m) { const d = el('i'); d.style.cssText = `width:${size}px;height:${size}px` + (f > 0 ? '' : `;background:${col}`); c.append(d); }
+      c.title = `${nameOf(id)} · ${rel(a)} to ${rel(b)}` + (human(id) ? '' : ` · active for ${pct(f, 1)} of it`) + (m ? ` · ${plural(m, 'message')} sent` : '');
+      row.append(c);
+    }
+    busy.append(row);
+  }
+  const ax = box('div', 'heat ax', el('span')), every = Math.ceil(n / 9);
+  ax.style.setProperty('--n', n);
+  for (let k = 0; k < n; k++) ax.append(el('span', null, k % every ? '' : rel(t0 + k * per)));
+  busy.append(ax);
+  const s1 = box('section', null, box('div', 'sh', el('h2', null, 'Who was busy when'),
+    el('span', 'cap', `Each square is ${dur(per)}. Deeper colour: active for more of it, which is to say its model calls came less than ${dur(ACTIVE_GAP)} apart. A dot: messages sent.`)), box('div', 'ox', busy));
+  // who messages whom
+  const sent = (a, b) => D.sent.get(a + ' ' + b) || 0, both = (a, b) => sent(a, b) + sent(b, a), order = seated(ids, both), wide = order.length > 6;
+  const max = Math.max(1, ...D.sent.values()), mx = el('div', 'heat mx');
+  mx.style.cssText = `--n:${order.length};--lab:70px;--ch:${wide ? 26 : 38}px;min-width:${70 + order.length * (wide ? 30 : 44)}px`;
+  mx.append(el('span'), ...order.map(id => wide ? box('span', 'hd', avatar(id, 20)) : el('span', 'hd', nameOf(id))));
+  for (const from of order) {
+    mx.append(el('span', 'nm', nameOf(from)));
+    for (const to of order) {
+      const v = sent(from, to), dm = 'dm:' + [from, to].sort().join(':'), c = el(v && D.convs.has(dm) ? 'button' : 'span', 'c' + (from === to ? ' self' : ''), v ? String(v) : '');
+      if (v) { shade(c, v / max); c.title = `${nameOf(from)} to ${nameOf(to)}: ${plural(v, 'message')}`; }
+      if (c.tagName === 'BUTTON') c.dataset.conv = dm;
+      mx.append(c);
+    }
+  }
+  const pairs = [];
+  order.forEach((a, i) => order.slice(i + 1).forEach(b => { if (both(a, b)) pairs.push([both(a, b), a, b]); }));
+  pairs.sort((x, y) => y[0] - x[0]);
+  const strongest = !pairs.length ? 'Nobody has messaged anyone yet.' : `Most between ${nameOf(pairs[0][1])} and ${nameOf(pairs[0][2])} (${pairs[0][0]})` +
+    (pairs[1] ? `, then ${nameOf(pairs[1][1])} and ${nameOf(pairs[1][2])} (${pairs[1][0]}).` : '.');
+  const s2 = section(order.length > 8 ? 'gfull' : 'g1', 'Who messages whom', box('div', 'ox', mx), el('div', 'cap', 'Row sends to column: a direct message, a reply, a mention, or a comment on an issue the other follows. ' + strongest));
+  // how soon the other side of a direct message wrote next
+  const counts = ANSWER.map(() => 0), slow = D.answers.reduce((a, x) => !a || x.dt > a.dt ? x : a, null);
+  for (const x of D.answers) counts[ANSWER.findIndex(b => x.dt < b[0])]++;
+  const most = Math.max(1, ...counts);
+  const s3 = section('g1', 'How soon the other side wrote next', ...(D.dms ? [
+    box('div', 'hist b', ...counts.map(c => { const i = el('i', c ? '' : 'z'); i.style.height = c / most * 100 + 'px'; return box('div', null, String(c), i); })),
+    box('div', 'hist l', ...ANSWER.map(b => el('span', null, b[1]))),
+    el('div', 'cap', `${D.answers.length} of ${plural(D.dms, 'direct message')} had a message from the other side after ${D.answers.length === 1 ? 'it' : 'them'}.` +
+      (slow ? ` The longest wait was ${dur(slow.dt)}: ${nameOf(slow.a.author)} writing to ${nameOf(slow.q.author)} at ${rel(slow.a.at)}.` : ''))]
+    : [el('div', 'none', 'No direct messages at this point in the run.')]));
+  // leaders
+  const val = f => ags.map(id => [id, f(D.members.get(id), id)]);
+  const s4 = section('g1', 'Leaders', box('div', 'lead',
+    ...leader('Most messages sent', val(m => m.sent), v => `${v} sent`), ...leader('Most often woken', val(m => m.wakes), times),
+    ...leader('Most commits', val((m, id) => main.by.get(id)?.n || 0), v => plural(v, 'commit')), ...leader('Biggest spender', val(m => m.usd), usd),
+    ...leader('Most time active', val((m, id) => worked(sp.get(id))), dur)));
+  $('patternsPane').replaceChildren(box('div', 'page', s1, box('div', 'split', s2, s3, s4)));
+}
+
+/* ================= one agent: what it cost, when it worked, what it did and with whom ================= */
+const DID_SHOWN = 200;
+function didRow(it, id, D) {   // a line of what the agent did: when, what kind, the words, and what came of it
+  const e = it.e, t = el('time', null, rel(e.at));
+  let kind, text, after = '', good = false, data = {};
+  if (it.sys === 'msg') {
+    const k = convKind(e.conv);
+    kind = k === 'dm' ? 'to ' + names(dmPeople(e.conv).filter(x => x !== id)) : k === 'issue' ? 'on ' + e.conv : 'in #' + e.conv;
+    text = oneLine(e.text, 240); after = noteText(e.id, D); data = { jump: e.id };
+  } else if (it.sys === 'push') {
+    const p = pushed(e.old, e.new);
+    kind = 'pushed'; good = true; text = p.c ? p.c.subject || '(no subject)' : 'to main';
+    after = String(e.new).slice(0, 7) + (p.n ? ` · +${p.add} −${p.del}` : ''); data = { drawer: e.new };
+  } else {
+    const is = D.issues.get(e.id);
+    kind = it.sys === 'issue' ? 'opened ' + e.id : e.status === 'done' ? 'closed ' + e.id : 'moved ' + e.id;
+    good = e.status === 'done'; text = is?.title || ''; after = it.sys === 'move' ? 'to ' + STATUS_LABEL[e.status].toLowerCase() : ''; data = { conv: e.id };
+  }
+  t.title = stamp(e.at);
+  const r = box('button', 'drow', t, el('span', 'kd' + (good ? ' good' : ''), kind), box('span', 'tx', text + ' ', el('span', 'nt', after)));
+  Object.assign(r.dataset, data);
+  return r;
+}
+function renderAgentPage(id, D, T) {
+  const p = S.people.get(id), m = D.members.get(id), pane = $('agentPane');
+  if (!p || !m || human(id)) {
+    head(nameOf(id), '');
+    if (changed('agent', 'none')) pane.replaceChildren(el('div', 'ghost', 'No agent by this name at this point in the run.'));
+    return;
+  }
+  const sp = spans(id, T), since = working(id, T), t0 = start(), len = Math.max(1, T - t0), main = onMain(T), cm = main.by.get(id), avg = perCommit(main, D.all.usd);
+  const state = box('span', 'state' + (since != null ? ' on' : ''), el('i', 'dot' + (since != null ? ' on' : '')),
+    since != null ? `Active since ${rel(since)}` : sp.length ? `Idle since ${rel(sp.at(-1)[1])}` : 'No model calls yet');
+  head(nameOf(id), p.role || '', state, avatar(id, 32), [p.harness, modelOf(id, m)].filter(Boolean).join(' · '));
+  if (!changed('agent', id, D.k, D.kl, main.all.n, tick(T), S.allDid)) return;
+  const tiles = box('div', 'tiles',
+    tile('Spent', spent(m), [m.usd && `${pct(m.usd, D.all.usd)} of the run`, unpriced(m)].filter(Boolean).join(' · ')),
+    tile('Tokens in', num(m.tin), m.tin ? `${pct(m.cached, m.tin)} from cache` : ''),
+    tile('Tokens out', num(m.tout), plural(m.calls, 'model call')),
+    tile('Commits', atLeast(main, cm?.n || 0), cm ? `+${cm.add} −${cm.del} lines` : ''),
+    tile('Per commit', usd(perCommit(main, m.usd, id)), avg != null ? `run average ${usd(avg)}` : ''),
+    tile('Messages', String(m.sent), m.sent ? `${m.direct} direct, ${m.sent - m.direct} in channels and issues` : ''));
+  const strip = el('div', 'strip'), on = worked(sp);
+  for (const [a, b] of sp) { const i = el('i'); i.style.cssText = `left:${((a - t0) / len * 100).toFixed(2)}%;width:${((b - a) / len * 100).toFixed(2)}%;background:${colorOf(id)}`; i.title = `${rel(a)} to ${rel(b)}`; strip.append(i); }
+  const active = section(null, 'When it was active', strip, box('div', 'axis', ...[0, 1, 2, 3, 4, 5, 6].map(i => el('span', null, rel(t0 + len * i / 6)))),
+    el('div', 'cap', sp.length ? `Active for ${dur(on)}, idle for the other ${dur(len - on)}. Active means its model calls came less than ${dur(ACTIVE_GAP)} apart.`
+      : 'No model calls yet at this point in the run.'));
+  const acts = S.allDid ? m.did : m.did.slice(-DID_SHOWN), log = section('g3', `Everything ${nameOf(id)} did`);
+  log.style.gap = '2px';
+  if (m.did.length > DID_SHOWN) { const t = el('button', 'tog', S.allDid ? `Show only the latest ${DID_SHOWN}` : `Show ${m.did.length - DID_SHOWN} earlier`); t.dataset.toggle = 'allDid'; t.style.padding = '4px 0'; log.append(t); }
+  log.append(...acts.map(it => didRow(it, id, D)));
+  if (!acts.length) log.append(el('div', 'none', 'No messages, pushes or issue moves yet at this point in the run.'));
+  const talks = roster(D).filter(x => x !== id).map(x => [x, (D.sent.get(id + ' ' + x) || 0) + (D.sent.get(x + ' ' + id) || 0)]).filter(x => x[1]).sort((a, b) => b[1] - a[1]);
+  const woken = [...m.wokenBy].sort((a, b) => b[1] - a[1]).map(([x, n]) => `${nameOf(x)} ${times(n)}`);
+  const mine = [...D.issues.values()].filter(is => is.assignees.includes(id) || is.author === id).map(is => {
+    const b = box('button', 'il', el('span', 'iid', is.id), ` ${is.title}, ${is.status === 'todo' ? 'to do' : is.status === 'doing' ? 'doing since ' + rel(is.since) : `${is.status} at ${rel(is.since)}`}`);
+    b.dataset.conv = is.id;
+    return b;
+  });
+  const aside = box('aside', 'g2 aside',
+    section(null, 'Talks with', talks.length ? box('div', 'bars talk', ...talks.flatMap(([x, n]) => [avatar(x, 22), el('span', 'nm', nameOf(x)), meter(n / talks[0][1], colorOf(x)), el('span', 'n', String(n))]))
+      : el('div', 'none', 'Nobody yet.')),
+    section(null, 'Woken by', woken.length ? el('div', null, woken.join(', ')) : el('div', 'none', m.wakes ? `${plural(m.wakes, 'wake')}, none by a message.` : 'No wake recorded so far.')),
+    section(null, 'Issues', ...(mine.length ? mine : [el('div', 'none', 'None opened by or assigned to it.')])),
+    section(null, 'Trace', link('Open the full trace', { view: 'agent', id, sub: 'trace' })));
+  pane.replaceChildren(box('div', 'page', tiles, active, box('div', 'split', log, aside)));
+}
+
+/* ================= an agent's full trace: everything its coding agent saw and did, session by session ================= */
+const TRACES = new Map();   // agent id -> { events, after: the control plane's cursor, busy, asked: when, loaded, done: an ended run all read, failed, open, shut }
+function traceOf(id) {
+  let t = TRACES.get(id);
+  if (!t) TRACES.set(id, t = { events: [], after: '', busy: false, asked: 0, loaded: false, done: false, failed: false, open: new Set(), shut: new Set() });
+  if (!t.busy && !t.done && Date.now() - t.asked > 3000) {   // a live run's trace grows: ask again every few seconds while it's open
+    t.busy = true; t.asked = Date.now();
+    api(`trace?member=${encodeURIComponent(id)}&after=${encodeURIComponent(t.after)}`).then(j => {
+      t.events.push(...j.events); t.after = j.after; t.loaded = true; t.failed = false;
+      if (j.more) t.asked = 0; else if (!j.live) t.done = true;
+    }, () => { t.failed = true; t.done = true; }).finally(() => { t.busy = false; schedule(); });
+  }
+  return t;
+}
+function shellOf(cmd) {   // a command as it was typed (codex wraps each in a shell's -lc '...' or -lc "..."), less a cd into its clone
+  const s = String(cmd || ''), m = s.match(/^(?:\/\S*\/)?(?:ba|z)?sh -lc (?:'([\s\S]*)'|"([\s\S]*)")$/);
+  return (!m ? s : m[1] != null ? m[1].replace(/'\\''/g, "'") : m[2].replace(/\\(["\\$`])/g, '$1')).replace(/^cd \S*\/(?:members\/[^/]+|swarmory)\/work && /, '');
+}
+function inRepo(path) { return String(path || '').replace(/^.*?\/(?:members\/[^/]+|swarmory)\/work\//, ''); }   // a path in the agent's clone, as the repo names it
+const SENDS = /(^|[;&|(]\s*)swarmory\s+send\b/;   // a command that sends the team a message
+function toolLine(e) {   // [icon, what it did, in monospace]
+  const i = e.input || {}, n = e.name || 'tool';
+  if (n === 'Bash' || n === 'shell') { const c = shellOf(i.command); return [/(^|[;&|(]\s*)swarmory\b/.test(c) ? 'chat' : 'term', c, true]; }
+  if (n === 'Read') return ['file', 'Read ' + inRepo(i.file_path) + (i.offset ? ` from line ${i.offset}` : ''), false];
+  if (n === 'Write') return ['file', 'Wrote ' + inRepo(i.file_path), false];
+  if (n === 'Edit' || n === 'MultiEdit' || n === 'NotebookEdit') return ['file', 'Edited ' + inRepo(i.file_path || i.notebook_path), false];
+  if (n === 'edit') return ['file', 'Edited ' + (i.changes || EMPTY).map(c => inRepo(c.path) + (c.kind && c.kind !== 'update' ? ` (${c.kind})` : '')).join(', '), false];
+  if (n === 'Grep' || n === 'Glob') return ['search', `${n} ${i.pattern || ''}${i.path ? ' in ' + inRepo(i.path) : ''}`, false];
+  if (n === 'Task' || n === 'Agent') return ['agent', 'Subagent' + (i.subagent_type ? ` (${i.subagent_type})` : '') + ': ' + (i.description || oneLine(i.prompt, 120)), false];
+  if (n === 'WebSearch' || n === 'web_search') return ['search', 'Searched the web: ' + (i.query || ''), false];
+  if (n === 'WebFetch') return ['search', 'Fetched ' + (i.url || ''), false];
+  if (n === 'TodoWrite') return ['todo', 'Updated its plan', false];
+  if (n === 'Skill') return ['tool', 'Used the skill ' + (i.skill || i.command || ''), false];
+  return ['tool', n + ' ' + oneLine(JSON.stringify(i), 160), false];
+}
+function step(cls, ic, ...body) {
+  const r = el('div', 'ts' + (cls ? ' ' + cls : '')), c = el('div', 'tc');
+  r.append(icon(ic, 'ti'), c);
+  c.append(...body);
+  return r;
+}
+function folded(line, text, k, t, cls) {   // a line that opens to show `text`; k keys its open state across repaints
+  const d = el('details'), s = el('summary');
+  s.append(...line);
+  d.append(s, el('div', cls || 'tout', text));
+  d.dataset.k = k; d.open = t.open.has(k);
+  return d;
+}
+function tokens(e) { return e.input + e.cached + e.written; }
+function traceTally(evs) {   // what a stretch of a trace adds up to
+  const n = { steps: 0, sent: 0, errors: 0, usage: 0, tin: 0, tout: 0 };
+  for (const e of evs) {
+    if (e.kind === 'tool') { const [, what, typed] = toolLine(e); n.steps++; if (typed && SENDS.test(what)) n.sent++; }
+    else if (e.kind === 'error' || e.kind === 'result' && e.error) n.errors++;
+    else if (e.kind === 'usage') { n.usage++; n.tin += tokens(e); n.tout += e.output; }
+  }
+  return n;
+}
+function messages(ids) {   // the team's messages these ids name, as the chat shows them, where it has them
+  const list = el('div', 'tmsgs');
+  for (const id of ids) { const m = D.msgs.get(id); if (m) list.append(messageRow(m, false, D, null, true)); }
+  return list.childElementCount ? list : null;
+}
+function stepsOf(evs, t, kids, results, k, running) {   // a session's (or a subagent's) events as rows
+  const out = [], called = new Set(evs.filter(e => e.kind === 'tool').map(e => e.id));
+  for (const e of evs) {
+    const at = k + ':' + e.i;
+    if (e.kind === 'start') {   // a wake's prompt lists its messages as [mN conv] lines
+      const woke = messages([...e.prompt.matchAll(/^\[(m\d+) /gm)].map(x => x[1]));
+      const label = !e.resumed ? 'Started with its brief' : woke ? 'Woken by' : 'What swarmory told it';
+      out.push(step('told', 'chat', el('div', 'tmeta', label), ...(woke ? [woke] : []),
+        woke || !e.resumed ? folded([el('div', 'tmeta', woke ? 'The prompt it got' : oneLine(e.prompt, 200) + ' …')], e.prompt, at, t, 'tl')
+          : el('div', 'tl', e.prompt)));
+    } else if (e.kind === 'init') {
+      const what = [e.model, e.tools?.length && plural(e.tools.length, 'tool'), e.mcp?.length && 'MCP: ' + e.mcp.join(', ')].filter(Boolean).join(' · ');
+      if (what) { const m = el('div', 'tmeta', what); m.title = (e.tools || EMPTY).join(', '); out.push(step('', 'dot', m)); }
+    } else if (e.kind === 'think') {
+      const thought = el('div', 'tmeta', 'Thought' + (e.tokens ? ` (about ${num(e.tokens)} tokens)` : ''));
+      thought.title = "The model's provider doesn't share its reasoning text";
+      out.push(step('think', 'think', e.text ? folded([el('div', 'tl', e.text)], e.text, at, t, 'tl') : thought));
+    } else if (e.kind === 'say') out.push(step('say', 'agent', el('div', 'tl', e.text)));
+    else if (e.kind === 'user') out.push(step('told', 'chat', el('div', 'tmeta', 'Asked'), el('div', 'tl', e.text)));
+    else if (e.kind === 'tool') {
+      const [ic, what, mono] = toolLine(e), r = results.get(e.id), line = el('div', 'tl' + (mono ? ' mono' : ''), what), meta = el('div', 'tmeta');
+      if (!r) meta.textContent = running ? 'running' : '';
+      else {
+        const status = r.exit != null ? `exit ${r.exit}` : r.error ? 'failed' : '';
+        if (status) meta.append(el('span', r.error ? 'bad' : null, status), r.text ? ' · ' : '');
+        if (r.text) meta.append(plural(r.text.split('\n').length, 'line') + ' of output');
+      }
+      const body = r?.text ? folded([line, meta], r.text, at, t) : el('div', null);
+      if (!r?.text) body.append(line, meta);
+      const nested = kids.get(e.id), sent = r && messages([...r.text.matchAll(/\bSent (m\d+) to /g)].map(x => x[1]));
+      if (sent) out.push(step('sent', 'chat', el('div', 'tmeta', 'Sent'), sent, body));   // `swarmory send` answers with each message's id
+      else out.push(step(mono && SENDS.test(what) ? 'say-team' : '', ic, body, ...(nested ? [el('div', 'tkids')] : [])));
+      if (nested) out.at(-1).querySelector('.tkids').append(...stepsOf(nested, t, kids, results, at, running));
+    } else if (e.kind === 'result') {
+      if (!e.id || !called.has(e.id)) out.push(step(e.error ? 'err' : '', 'tool', folded([el('div', 'tl', oneLine(e.text, 200))], e.text, at, t)));
+    } else if (e.kind === 'task') out.push(step('', 'term', el('div', 'tl', 'Background job' + (e.status ? ` ${e.status}` : '') + (e.text ? ': ' + e.text : ''))));
+    else if (e.kind === 'todo') {
+      const ul = el('ul', 'todo');
+      for (const x of e.items || EMPTY) ul.append(el('li', x.done ? 'done' : null, x.text));
+      out.push(step('', 'todo', el('div', 'tmeta', 'Its plan'), ul));
+    } else if (e.kind === 'compact') out.push(el('div', 'tdiv', 'Conversation compacted' + (e.tokens ? ` from ${num(e.tokens)} tokens` : '') + (e.trigger ? ` (${e.trigger})` : '')));
+    else if (e.kind === 'usage') {
+      const bits = [`${num(tokens(e))} tokens in`, `${num(e.output)} out`, e.duration_ms && span(e.duration_ms / 1000), e.turns && plural(e.turns, 'turn')].filter(Boolean);
+      out.push(el('div', 'tdiv', (e.error ? 'Ended with an error · ' : '') + bits.join(' · ')));
+    } else if (e.kind === 'error') out.push(step('err', 'warn', el('div', 'tl', e.text)));
+    else if (e.kind === 'warn') out.push(step('warned', 'warn', el('div', 'tl', e.text)));
+    else if (e.kind === 'note') out.push(step('', 'dot', el('div', 'tmeta', e.text)));
+    else if (e.kind === 'end') out.push(step(e.status ? 'err' : '', e.status ? 'warn' : 'dot', el('div', 'tmeta', e.status ? `The session ended with exit ${e.status}` : 'The session ended'), ...(e.stderr ? [el('div', 'tout', e.stderr)] : [])));
+    else if (e.kind === 'other') out.push(step('', 'dot', folded([el('div', 'tmeta', e.type)], e.text, at, t)));
+  }
+  return out;
+}
+function sessionBlock(id, t, n, evs, last, live) {
+  const k = id + ':' + n, d = el('details', 'tses'), s = el('summary'), began = evs.find(e => e.kind === 'start'), end = evs.find(e => e.kind === 'end'), sum = traceTally(evs);
+  d.dataset.k = k;
+  d.open = !t.shut.has(k);
+  const t0 = began?.at ?? evs[0].at, t1 = end?.at ?? evs.at(-1).at;
+  const bits = [t0 && clock(t0), t0 && t1 && t1 > t0 && span(t1 - t0), plural(sum.steps, 'step'), sum.sent && plural(sum.sent, 'team message'), sum.errors && plural(sum.errors, 'error'),
+    sum.usage && `${num(sum.tin)} in / ${num(sum.tout)} out`].filter(Boolean);
+  const st = end ? el('span', 'tst ' + (end.status ? 'bad' : 'ok'), end.status ? `exit ${end.status}` : 'done') : el('span', 'tst' + (last && live ? ' live' : ''), last && live ? 'running' : 'cut off');
+  s.append(el('span', 'tsn', `Session ${n}` + (began ? (began.resumed ? '' : ' · new conversation') : '')), el('span', 'tsm', bits.join(' · ')), st);
+  const kids = new Map(), results = new Map(), top = [];
+  for (const e of evs) {
+    if (e.kind === 'result' && e.id) results.set(e.id, e);
+    (e.parent ? into(kids, e.parent) : top).push(e);
+  }
+  const b = el('div', 'tsb');
+  b.append(...stepsOf(top, t, kids, results, k, !end && last && live));
+  d.append(s, b);
+  return d;
+}
+const traceView = { sc: $('tracePane'), id: null, shown: 0 };   // shown: the events the last paint had
+function renderTrace(id, T) {
+  head(nameOf(id), 'the full trace: everything it saw and did, session by session', link('Back to its page', { view: 'agent', id }), avatar(id, 32));
+  const t = traceOf(id), vis = T >= present() - 1 ? t.events : t.events.filter(e => e.at == null || e.at <= T + 1);   // at the end, all: its last lines can land after the team's last event
+  if (!changed('trace', id, vis.length, t.loaded, t.failed, S.live && !S.ended, D.msgs.size)) return;
+  const sc = traceView.sc, again = traceView.id === id && traceView.shown, stick = again && atBottom(sc), top = again ? sc.scrollTop : 0;
+  traceView.id = id; traceView.shown = vis.length;   // a first look starts at its first session; a reader at the bottom of a live run stays there
+  const w = el('div', 'trace');
+  if (!vis.length) w.append(el('div', 'ghost', t.failed ? 'The control plane has no trace for this agent. A run from before traces existed has none.'
+    : !t.loaded ? 'Loading…' : t.events.length ? 'Nothing yet at this point in the run.' : 'No session has started yet.'));
+  else {
+    const by = new Map();
+    for (const e of vis) into(by, e.session).push(e);
+    const n = traceTally(vis), sum = el('div', 'tsum');
+    const st = (v, w2, w1) => sum.append(box('span', null, el('b', null, num(v)), ' ' + (w1 && v === 1 ? w1 : w2)));
+    st(by.size, 'sessions', 'session');
+    st(n.steps, 'steps', 'step');
+    st(n.sent, 'team messages', 'team message');
+    st(n.errors, 'errors', 'error');
+    if (n.usage) { st(n.tin, 'tokens in'); st(n.tout, 'out'); }
+    w.append(sum);
+    const last = Math.max(...by.keys());
+    let ended = null;
+    for (const [no, evs] of by) {
+      const begun = evs.find(e => e.kind === 'start')?.at;
+      if (ended && begun > ended) w.append(el('div', 'tsleep', `Slept ${span(begun - ended)}, until ${clock(begun)}`));
+      w.append(sessionBlock(id, t, no, evs, no === last, S.live && !S.ended));
+      ended = evs.find(e => e.kind === 'end')?.at ?? null;
+    }
+  }
+  sc.replaceChildren(w);
+  sc.scrollTop = stick ? sc.scrollHeight : top;
+}
+function folding(sm) {   // a click on a fold in a trace: remember it, so a repaint keeps it (a toggle event also fires when a repaint opens one)
+  const d = sm.parentElement, k = d.dataset.k, t = S.route?.view === 'agent' && TRACES.get(S.route.id);
+  if (!k || !t) return;
+  if (d.open) { t.open.delete(k); t.shut.add(k); } else { t.open.add(k); t.shut.delete(k); }   // it toggles after this click
+}
+
+/* ================= search: every message at the playhead with all the words, newest first ================= */
+const HITS = 200;
+function query() { return $('filter').value.trim().toLowerCase().split(/\s+/).filter(Boolean); }
+function renderSearch(D) {
+  const q = query();
+  if (!changed('search', q.join(' '), D.nMsgs)) return;
+  const hits = [...D.msgs.values()].filter(e => !e.activity && q.every(w => String(e.text).toLowerCase().includes(w))).reverse();
+  head('Search', `${plural(hits.length, 'message')} with “${q.join(' ')}” at this point in the run`);
+  const list = el('div', 'msgs');
+  const mark = new RegExp(q.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+  for (const e of hits.slice(0, HITS)) { const r = messageRow(e, false, D, null, true, mark); r.classList.add('hit'); list.append(r); }
+  if (hits.length > HITS) list.append(el('div', 'ghost', `The newest ${HITS} are shown. Another word narrows it.`));
+  $('searchPane').replaceChildren(hits.length ? list : el('div', 'ghost', 'No message has all of those words at this point in the run.'));
+  $('searchPane').scrollTop = 0;
+}
+function showMsg(id) {   // open a message where it lives, its thread in the drawer if it is a reply
+  const e = D?.msgs.get(id), th = D?.thread.get(id);
+  if (!e) return;
+  $('filter').value = '';
+  S.reveal = { id, conv: e.conv };
+  go({ view: 'conv', id: e.conv, drawer: th && th.id !== id ? th.id : null });
+  schedule();
+}
+function reveal() {
+  if (sel() !== S.reveal.conv) return;
+  const m = (S.route.drawer && drawerView.mids.get(S.reveal.id)) || mainView.mids.get(S.reveal.id);
+  if (m) { S.reveal = null; m.scrollIntoView({ block: 'center' }); m.classList.remove('flash'); void m.offsetWidth; m.classList.add('flash'); }
+  else if (mainView.first) earlier(mainView);
+  else S.reveal = null;
+}
+
+/* ================= commits on main, newest first, as of the playhead ================= */
+const COMMITS_MOST = 500;   // /commits answers with main's latest this many
+let commitV = 0;
+function api(path) { return fetch(path, { headers: { Authorization: 'Bearer ' + S.token }, cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(r.status)); }
+function loadCommits() {
+  const v = ++commitV;
+  api('commits').then(j => {
+    if (v !== commitV) return;
+    S.commits = j.commits.reverse();   // oldest first, in main's own order
+    S.cidx = new Map(S.commits.map((c, i) => [c.sha, i]));
+    for (const n of document.querySelectorAll('[data-sha]')) n.replaceWith(shaRef(n.dataset.sha));
+    for (const b of document.querySelectorAll('.qcard.push')) fillPush(b);
+    deps.clear();   // every view may show a commit
+    schedule();
+  }, () => {});
+}
+function commitOf(x) { return x && x.length >= 7 && S.commits?.find(c => c.sha.startsWith(x)) || null; }   // a commit /commits listed, by its sha or the start of one
+function patchOf(sha) {   // what /commit says of it, asked once
+  if (!S.patches.has(sha)) {
+    S.patches.set(sha, null);
+    api('commit?sha=' + sha).then(j => S.patches.set(sha, j), () => S.patches.set(sha, false)).finally(schedule);
+  }
+  return S.patches.get(sha);
+}
+function lines(f) { return f.add == null ? [el('span', 'dm', 'binary')] : [el('span', 'add', '+' + f.add), el('span', 'del', '−' + f.del)]; }
+function churn(c) { const f = c.files; return [f.length, f.reduce((n, x) => n + (+x.add || 0), 0), f.reduce((n, x) => n + (+x.del || 0), 0)]; }
+function renderCommits(D, T) {   // main's commits and the pushes the control plane refused, newest first
+  const main = onMain(T), n = main.all.n, dr = S.route.drawer, refused = D.pushes.filter(p => !p.ok);
+  head('Commits', main.capped ? `latest ${COMMITS_MOST} on main, ${n} of them by ${rel(T)}` : n ? `on main by ${rel(T)}` : 'nothing on main yet',
+    [n && plural(n, 'commit'), refused.length && `${plural(refused.length, 'push', 'pushes')} refused`].filter(Boolean).join(' · '));
+  if (!changed('commits', n, dr, refused.length)) return;
+  const list = el('div', 'clist'), shown = (S.commits || EMPTY).slice(0, n).reverse();
+  for (const p of refused) { const i = shown.findIndex(c => c.at <= p.at); shown.splice(i < 0 ? shown.length : i, 0, p); }   // a refusal goes above what was committed before it
+  for (const c of shown) {
+    if (c.type === 'push') {
+      const m = box('div', 'cmain', el('div', 'cs', oneLine(c.reason, 300) || 'No reason given'),
+        el('div', 'cmeta', `push refused · ${nameOf(c.by)} · ${rel(c.at)}${c.ref && c.ref !== MAIN ? ' · ' + c.ref : ''}`));
+      m.title = c.reason || '';
+      list.append(box('div', 'crow rf', avatar(c.by, 26), m));
+      continue;
+    }
+    const [nf, add, del] = churn(c), a = whoOf(c);
+    const b = box('button', 'crow' + (c.sha === dr ? ' sel' : ''), avatar(a, 26), box('div', 'cmain', el('div', 'cs', c.subject || '(no subject)'),
+      box('div', 'cmeta', el('span', 'csha', c.sha.slice(0, 7)), `${nameOf(a)} · ${rel(c.at)} · ${plural(nf, 'file')}`, el('span', 'add', '+' + add), el('span', 'del', '−' + del))));
+    b.dataset.drawer = c.sha;
+    list.append(b);
+  }
+  $('commitsPane').replaceChildren(shown.length ? list : el('div', 'ghost', main.capped ? `None of main’s latest ${COMMITS_MOST} commits was on it by this point in the run.` : 'Nothing was on main by this point in the run.'));
+}
+function paintCommit(c, d) {   // c: the commit as /commits or /commit told it, or null; d: what /commit said, null while asking, false if it is not on main
+  const w = el('div', 'cdet');
+  if (!c) w.append(el('div', 'ghost', d === null ? 'Loading…' : 'No commit on main has this sha.'));
+  else {
+    if (d?.body?.trim()) w.append(el('div', 'tx cbody', d.body.trim()));
+    if (c.files) {   // a commit from /commit has its patch, not the list's file counts
+      const [nf, add, del] = churn(c), fl = el('div', 'cfiles');
+      for (const f of c.files) { const b = el('button', 'cf'); b.dataset.file = f.path; b.append(el('span', null, f.path), ...lines(f)); fl.append(b); }
+      w.append(el('div', 'cmeta', `${plural(nf, 'file')} changed, ${add} added, ${del} removed`), fl);
+    }
+    if (d) w.append(diffView(d.patch, c.files || EMPTY));
+    if (d?.truncated) w.append(el('div', 'ghost', 'The diff is cut off here: it is too long to show in full.'));
+    if (!d) w.append(el('div', 'ghost', d === false ? 'The control plane could not show this diff.' : 'Loading the diff…'));
+  }
+  drawerView.id = null;   // a thread painted here next starts afresh
+  drawerView.box.replaceChildren(w);
+  drawerView.sc.scrollTop = 0;
+}
+const DIFF = [['@@', 'dh'], ['+', 'da'], ['-', 'dd'], [' ', '']];
+function diffView(patch, files, only) {   // only: the one file to show
+  const frag = document.createDocumentFragment();
+  let pre = null;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      const path = line.match(/ b\/(.*)$/)?.[1] || line.slice(11);
+      pre = null;
+      if (only && path !== only) continue;
+      const f = files.find(x => x.path === path), file = el('div', 'df'), h = el('div', 'dfh'), dx = el('div', 'dx');
+      file.dataset.path = path;
+      h.append(el('span', null, path));
+      if (f) h.append(...lines(f));
+      dx.append(pre = el('pre'));
+      file.append(h, dx);
+      frag.append(file);
+    } else if (pre && line && !/^(---|\+\+\+|index) /.test(line)) {
+      pre.append(el('span', DIFF.find(([p]) => line.startsWith(p))?.[1] ?? 'dm', line));
+    }
+  }
+  return frag;
+}
+
+/* ================= the drawer: a commit's patch, or the replies to a message ================= */
+function renderDrawer(id, D, stick) {
+  const k = !id ? null : /^m\d+$/.test(id) ? 'thread' : SHA.test(id) ? 'commit' : null;   // anything else a link carries opens nothing
+  $('drawer').classList.toggle('on', !!k);
+  if (!k) return;
+  const th = D.thread.get(id), listed = k === 'commit' ? commitOf(id) : null, d = k === 'commit' ? patchOf(listed?.sha || id) : null, c = listed || d || null;
+  if (changed('drawer', id, th?.conv, listed?.sha, d ? d.sha : d)) {
+    const x = el('button', 'xbtn');
+    x.innerHTML = SVG.close; x.dataset.close = ''; x.setAttribute('aria-label', 'Close');
+    const col = k === 'thread' ? box('div', 'hcol', el('div', 'htitle', 'Thread'), el('span', 'hsub', th ? convTitle(th.conv, D) : ''))
+      : box('div', 'hcol', el('div', 'htitle', c ? c.subject || '(no subject)' : id.slice(0, 7)),
+        el('span', 'hsub', c ? `${c.sha.slice(0, 7)} · ${nameOf(whoOf(c))} · committed ${clock(c.at)}` : d === null ? 'Loading' : 'Not a commit on main'));
+    $('dHead').replaceChildren(...[c && avatar(whoOf(c), 32), col, x].filter(Boolean));
+    if (k === 'commit') paintCommit(c, d);
+  }
+  if (k === 'thread') paintConv(drawerView, 'thread:' + id, D, stick);
+}
+
+/* ================= time bar: where the playhead is in the run, with a mark for each push to main ================= */
+const track = $('track'), tip = $('tip');
+function drawTrack(T) {
+  const t0 = start(), t1 = Math.max(present(), t0 + 1), f = Math.max(0, Math.min(1, (T - t0) / (t1 - t0)));
+  $('tlFill').style.width = $('tlThumb').style.left = (f * 100).toFixed(2) + '%';
+  track.setAttribute('aria-valuenow', String(Math.round(f * 100)));
+  track.setAttribute('aria-valuetext', `${rel(T)} into the run, ${clock(T)}`);
+  if (!changed('marks', S.pushes.length, S.people.size, S.live ? Math.floor(Math.log(t1 - t0) * 500) : t1)) return;   // a live run's marks move as it grows
+  const seen = new Set(), frag = document.createDocumentFragment();
+  for (const e of S.pushes) {   // one mark per pusher per thousandth of the bar
+    const x = Math.round((e.at - t0) / (t1 - t0) * 1000) / 10, col = colorOf(e.by);
+    if (seen.has(x + col)) continue;
+    seen.add(x + col);
+    const i = el('i');
+    i.style.left = x + '%'; i.style.background = col;
+    frag.append(i);
+  }
+  $('marks').replaceChildren(frag);
+}
+function tAtX(x) {
+  const r = track.getBoundingClientRect(), t0 = start(), t1 = Math.max(present(), t0 + 1);
+  return t0 + Math.max(0, Math.min(1, (x - r.left) / r.width)) * (t1 - t0);
+}
+function seek(t, final) {
+  S.playing = false;
+  const p = present();
+  if (final && p - t < (p - start()) * 0.004) { S.follow = true; }
+  else { S.follow = false; S.T = t; }
+  scrubbing = true;
+  schedule();
+}
+let scrubbing = false, dragging = false;
+track.addEventListener('pointerdown', e => { dragging = true; track.setPointerCapture(e.pointerId); seek(tAtX(e.clientX)); });
+track.addEventListener('pointermove', e => {
+  const r = track.getBoundingClientRect(), t = tAtX(e.clientX), near = (present() - start()) * 4 / r.width;
+  if (dragging) seek(t);
+  const p = S.pushes[countUpTo(S.pushes, t + near, evT) - 1];
+  tip.style.display = 'block';
+  tip.style.left = Math.max(60, Math.min(r.width - 60, e.clientX - r.left)) + 'px';
+  tip.textContent = `${rel(t)} · ${clock(t)}` + (p && p._t >= t - near ? ` · ${nameOf(p.by)} pushed ${String(p.new).slice(0, 7)}` : '');
+});
+track.addEventListener('pointerup', e => { if (dragging) { dragging = false; seek(tAtX(e.clientX), true); } });
+track.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+track.addEventListener('keydown', e => {
+  const T = cursor();
+  let t = null;
+  const stops = S.ev.filter(x => x.type === 'message' || x.type === 'move' || x.type === 'issue' || x.type === 'push').map(evT);
+  if (e.key === 'ArrowRight') t = e.shiftKey ? T + 30 : (stops.find(x => x > T + 1e-6) ?? present());
+  else if (e.key === 'ArrowLeft') { if (e.shiftKey) t = T - 30; else { const i = countUpTo(stops, T - 1e-6, tOf); t = i > 0 ? stops[i - 1] : start(); } }
+  else if (e.key === 'Home') t = start();
+  else if (e.key === 'End') t = present();
+  if (t == null) return;
+  e.preventDefault();
+  seek(t, true);
+});
+
+/* playback */
+let lastFrame = 0;
+function setPlaying(on) {
+  S.playing = on;
+  if (on) {
+    S.T = S.follow || cursor() >= present() - 0.01 ? start() : cursor();
+    S.follow = false; lastFrame = 0;
+  }
+  schedule();
+}
+$('play').addEventListener('click', () => setPlaying(!S.playing));
+for (const s of SPEEDS) {
+  const b = el('button', null, s + '×');
+  b.dataset.speed = s; b.title = `Replay at ${s} times the run’s speed`;
+  b.addEventListener('click', () => { S.speed = s; renderSpeeds(); });
+  $('speeds').append(b);
+}
+function renderSpeeds() { for (const b of $('speeds').children) b.classList.toggle('on', +b.dataset.speed === S.speed); }
+renderSpeeds();
+$('liveBtn').addEventListener('click', () => { S.follow = true; S.playing = false; scrubbing = true; schedule(); });
+
+/* ================= the run's name and state, and the time bar's words ================= */
+function renderChrome(T) {
+  const run = S.run || {}, live = S.live, left = run.deadline - serverNow();
+  $('wsName').textContent = run.mission || 'swarmory';
+  $('wsName').title = run.run || '';
+  document.title = (run.mission ? run.mission + ' · ' : '') + 'swarmory';
+  $('wsDot').className = 'dot' + (live ? ' on' : '');
+  $('wsState').textContent = live ? 'Running' + (left > 0 ? ` · ${span(left)} left` : '') : S.ended ? `Ended · last activity at ${rel(present())}` : 'Loading';
+  $('wsState').title = run.deadline ? 'Deadline ' + new Date(run.deadline * 1000).toLocaleString() : '';
+  $('tlA').textContent = rel(T);
+  $('tlB').textContent = 'of ' + span(present() - start());
+  const play = $('play'), pk = S.playing ? 'pause' : S.follow ? 'start' : 'here';
+  if (changed('play', pk)) {
+    play.innerHTML = S.playing ? SVG.pause : SVG.play;
+    play.setAttribute('aria-label', S.playing ? 'Pause' : 'Replay from here');
+    play.title = S.playing ? 'Pause' : (S.follow ? 'Replay the run from the start' : 'Play from here');
+  }
+  $('liveBtn').className = S.follow ? 'at' + (live ? ' live' : '') : '';
+  $('liveTxt').textContent = S.follow ? (live ? 'Live' : 'End of run') : S.playing ? `Replaying at ${S.speed}×` : (live ? 'Back to live' : 'Jump to end');
+}
+
+/* ================= frame loop ================= */
+let raf = 0, shown = '';
+function schedule() { if (!raf) raf = requestAnimationFrame(frame); }
+function show(mode) {
+  if (mode === shown) return;
+  shown = mode; deps.delete('head');
+  document.body.dataset.mode = mode;
+  for (const p of PANES) $(p + 'Pane').hidden = p !== mode;
+}
+function updateJump() { const sc = mainView.sc; $('jump').hidden = shown !== 'conv' || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240; }
+function frame(ts) {
+  raf = 0;
+  if (S.playing) {
+    if (lastFrame) S.T += (ts - lastFrame) / 1000 * S.speed;
+    lastFrame = ts;
+    if (S.T >= present()) { S.playing = false; S.follow = true; }
+    else schedule();
+  }
+  if (!S.loaded && !S.ev.length) { renderChrome(0); return; }
+  const T = cursor();
+  fold(T);
+  if (!S.route) {
+    const id = D.main || [...D.convs.keys()][0];
+    if (id) S.route = { view: 'conv', id };
+  }
+  renderChrome(T);
+  const r = S.route, stick = S.playing || scrubbing, mode = !r ? 'conv' : query().length ? 'search' : r.view === 'agent' && r.sub ? 'trace' : r.view;
+  show(mode);
+  if (mode !== 'search') deps.delete('search');   // so coming back repaints it
+  if (mode === 'search') renderSearch(D);
+  else if (mode === 'board') renderBoard(D, T);
+  else if (mode === 'stats') renderStats(D, T);
+  else if (mode === 'patterns') renderPatterns(D, T);
+  else if (mode === 'commits') renderCommits(D, T);
+  else if (mode === 'trace') renderTrace(r.id, T);
+  else if (mode === 'agent') renderAgentPage(r.id, D, T);
+  else if (r) { renderHead(r.id, D); paintConv(mainView, r.id, D, stick); renderRail(D, T); }
+  if (r) renderDrawer(mode === 'search' ? null : r.drawer, D, stick);   // search results take the whole pane
+  updateJump();
+  if (S.reveal) reveal();
+  renderNav(D, T);
+  drawTrack(T);
+  scrubbing = false;
+}
+
+/* ================= navigation ================= */
+window.addEventListener('hashchange', () => {
+  S.route = parseRoute() || S.route;
+  $('filter').value = '';
+  document.body.classList.remove('side-open');
+  schedule();
+});
+document.addEventListener('click', e => {
+  const t = e.target, at = s => t.closest(s);
+  if (at('#tracePane .trace details > summary')) return folding(at('summary'));
+  const more = at('.more-tx');
+  if (more) { const tx = more.previousElementSibling; more.textContent = tx.classList.toggle('open') ? 'Show less' : 'Show more'; return; }
+  if (at('.more')) return earlier(at('#drawer') ? drawerView : mainView);
+  if (at('.att, a')) return;
+  const sh = at('button.sha');
+  if (sh) return go({ ...S.route, drawer: commitOf(sh.dataset.sha).sha });
+  const j = at('[data-jump]') || at('.hit')?.querySelector('[data-jump]');   // anywhere on a search hit opens it, as its button does
+  if (j) return showMsg(j.dataset.jump);
+  const dw = at('[data-drawer]');
+  if (dw) return go({ ...S.route, drawer: dw.dataset.drawer });
+  const fl = at('[data-file]');
+  if (fl) return $('dMsgs').querySelector(`.df[data-path="${CSS.escape(fl.dataset.file)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const tg = at('[data-toggle]');
+  if (tg) { S[tg.dataset.toggle] = !S[tg.dataset.toggle]; return schedule(); }
+  if (at('[data-close]')) return go({ ...S.route, drawer: null });
+  const to = at('[data-agent]') ? { view: 'agent', id: at('[data-agent]').dataset.agent } : at('[data-route]') ? { view: at('[data-route]').dataset.route }
+    : at('[data-conv]') ? { view: 'conv', id: at('[data-conv]').dataset.conv } : null;
+  if (!to) return;
+  if (hashOf(to) === location.hash) { $('filter').value = ''; document.body.classList.remove('side-open'); schedule(); }
+  go(to);
+});
+$('filter').addEventListener('input', schedule);
+$('filter').addEventListener('keydown', e => { if (e.key === 'Enter') document.body.classList.remove('side-open'); });
+$('sideBtn').addEventListener('click', () => document.body.classList.toggle('side-open'));
+$('scrim').addEventListener('click', () => document.body.classList.remove('side-open'));
+$('convPane').addEventListener('scroll', () => { updateJump(); if (mainView.sc.scrollTop < 200) earlier(mainView); }, { passive: true });
+$('dScroller').addEventListener('scroll', () => { if (drawerView.sc.scrollTop < 200) earlier(drawerView); }, { passive: true });
+$('jump').addEventListener('click', () => { const sc = mainView.sc; sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' }); });
+document.addEventListener('keydown', e => {
+  const f = $('filter');
+  if (e.key === 'Escape' && f.value && (e.target === f || !S.route?.drawer)) { f.value = ''; return schedule(); }
+  if (e.key === 'Escape' && S.route?.drawer) return go({ ...S.route, drawer: null });
+  if (e.key === 'Escape') document.body.classList.remove('side-open');
+  if (e.key === ' ' && !e.target.closest('button, input, a, summary, #track')) { e.preventDefault(); setPlaying(!S.playing); }
+});
+window.addEventListener('resize', schedule);
+setInterval(() => { if (!S.playing) schedule(); }, 1000);
+
+/* ================= feed ================= */
+function fatal(h, p) {
+  $('fatalH').textContent = h; $('fatalP').textContent = p;
+  $('fatal').classList.add('on');
+}
+function banner(text) { const b = $('banner'); b.textContent = text || ''; b.classList.toggle('on', !!text); }
+let failures = 0;
+async function poll() {
+  let res;
+  try {
+    res = await fetch(`feed?log=${S.off.log}&ledger=${S.off.ledger}`, { headers: { Authorization: 'Bearer ' + S.token }, cache: 'no-store' });
+  } catch (err) {
+    failures++;
+    banner('Lost the connection to the control plane. Retrying…');
+    return setTimeout(poll, Math.min(15000, 1000 * 2 ** failures));
+  }
+  if (res.status === 401 || res.status === 403) return fatal('This link doesn’t open this run', 'The view token in the link was not accepted. Ask whoever shared it for the link that `swarmory status RUN` prints.');
+  if (!res.ok) {
+    failures++;
+    banner(`The control plane answered ${res.status}. Retrying…`);
+    return setTimeout(poll, Math.min(15000, 1000 * 2 ** failures));
+  }
+  let j;
+  try { j = await res.json(); } catch { failures++; return setTimeout(poll, 3000); }
+  failures = 0; banner('');
+  const got = ingest(j);
+  if (!S.loaded && !j.more) S.loaded = scrubbing = true;   // caught up
+  if (got || S.loaded) schedule();
+  if (j.more) return setTimeout(poll, 0);           // the answer was cut at its size cap
+  if (!S.live) { S.ended = true; schedule(); return; }   // a run that has ended, all of it read
+  setTimeout(poll, 2000);
+}
+if (!S.token) fatal('This link has no view token', 'A viewer link ends in #TOKEN. Open the full link that `swarmory status RUN` prints.');
+else { schedule(); poll(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="700" viewBox="270 450 600 680" role="img" aria-labelledby="title">
+  <title id="title">Swarmory logo</title>
+  <style>
+    .factory { fill: #0033CC; }
+    @media (prefers-color-scheme: dark) { .factory { fill: #5B8CFF; } }
+  </style>
+  <path class="factory" d="M324 1078V938L505 837V933L657 844V920L674 913V660H752V913H816V1078Z"/>
+  <g fill="#FF7900">
+    <circle cx="633" cy="533" r="26"/>
+    <circle cx="709" cy="533" r="26"/>
+    <circle cx="785" cy="533" r="26"/>
+    <circle cx="671" cy="598" r="26"/>
+    <circle cx="747" cy="598" r="26"/>
+  </g>
+</svg>

@@ -1,0 +1,28 @@
+schema_version = "1.4"
+artifacts = ["/app/output"]
+
+[task]
+name = "<team>/<task-name>"
+version = "1.0.0"
+description = "<one line>"
+
+[environment]
+network_mode = "no-network"
+cpus = 1
+memory_mb = 2048
+
+[agent]
+user = "agent"
+timeout_sec = 3720.0
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 120.0
+
+[verifier.environment]
+network_mode = "no-network"
+
+[metadata]
+claim = "<one sentence: who, does what, under which conditions>"
+how_items_are_made = "<a way from references/ideation.md>"
+verifier_tier = "<code, decision call or rubric judge, from references/verifiers.md>"
