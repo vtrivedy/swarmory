@@ -19,8 +19,10 @@ from .policy import sha
 MENTION = re.compile(r"(?<![\w@])@([A-Za-z][\w-]*)")
 CHANNEL = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 STATUSES = ("todo", "doing", "done", "canceled")
-WAKE_MOST = 10  # messages a wake carries; `swarmory read` has the rest
-SETTLE = 20  # seconds a wake waits for the rest of a burst, so a teammate's run of messages is one wake
+TURN_MOST = 10  # messages a turn shows; `swarmory read` has the rest
+INBOX_MOST = 8  # messages one delivery between tool calls carries
+SETTLE = 10  # seconds a held agent waits for the rest of a burst, so a teammate's run of messages is one turn
+IDLE = 240  # seconds a waiting agent's next turn waits for a message before it starts anyway
 SYSTEM = "swarmory"  # the author of what the server posts itself, such as a job's result: no member's id
 
 
@@ -82,21 +84,23 @@ class Team:
         self.dir, self.also = Path(data), also
         config = json.loads((self.dir / "config.json").read_text())
         self.lock = threading.Lock()
-        self.bells = defaultdict(lambda: threading.Condition(self.lock))  # member -> what its wait() sleeps on
+        self.bells = defaultdict(lambda: threading.Condition(self.lock))  # member -> what its wait() holds on
         self.seq = self.mcount = self.icount = self.fcount = 0
         self.members, self.channels, self.board, self.messages = {}, {}, {}, {}
         self.files = {}   # file id -> {id, name, size, by}: what was uploaded, its bytes in files/<id>
         self.shared = {}  # file id -> the conversations it was sent in
         self.order = []   # every message in seq order
         self.convs = {}   # conv -> [message]
-        self.wake = {}    # message id -> whom it woke, as logged with the message
-        self.pending = {}  # member -> the messages that woke them since their last wake, oldest first
+        self.recipients = {}  # message id -> the members it is for, as logged with the message
+        self.inboxes = {}  # member -> the messages for them not yet delivered, oldest first
         self.marks = {}   # (member, conv) -> read upto
         self.nonces = {}  # (member, nonce) -> the event it made
-        self.sleeps = {}  # member -> its newest sleep; an older one still held (a killed agent's) must not take a wake
+        self.holds = {}   # member -> its newest held call; an older one still held (a killed agent's) must not answer
+        self.waiting = {}  # member -> when it said it is waiting (`wait`), until its next turn starts
         self.started = {}  # member -> when the server last started its worker, which minted the token it holds now
         self.starts = Counter()  # member -> how many times the server has started its worker
         self.digests = set()  # every token digest the run has had, which a trace must hide
+        self.turns = {}   # member -> main's commit at its last wait's answer: where the next answer's commits start
         self.path = self.dir / "log.jsonl"
         replay(self.path, self.apply)
         self.log = open(self.path, "a")
@@ -113,13 +117,13 @@ class Team:
         try:
             self.log.write(json.dumps(ev) + "\n")
             self.log.flush()
-            if ev["type"] not in ("read", "woke"):  # a crash that loses one costs a message shown or a wake again
+            if ev["type"] not in ("read", "delivered"):  # a crash that loses one costs a message shown again
                 os.fsync(self.log.fileno())
         except OSError as e:  # the line may be on disk but not in memory: exit, and the restart replays what landed
             os.write(2, f"swarmory server: the log write failed ({e!r}); exiting\n".encode())
             os._exit(1)
         self.apply(ev)
-        for x in ev.get("wakes", ()):
+        for x in ev.get("recipients", ()):
             self.bells[x].notify_all()
         return ev
 
@@ -167,8 +171,15 @@ class Team:
         elif t == "read":
             key = (ev["member"], ev["conv"])
             self.marks[key] = max(self.marks.get(key, 0), ev["upto"])
-        elif t == "woke":
-            self.pending[ev["member"]] = [m for m in self.pending.get(ev["member"], ()) if m["seq"] > ev["upto"]]
+        elif t == "delivered":
+            self.inboxes[ev["member"]] = [m for m in self.inboxes.get(ev["member"], ()) if m["seq"] > ev["upto"]]
+        elif t == "wait":
+            self.waiting[ev["member"]] = ev["at"]
+        elif t == "turn":
+            self.waiting.pop(ev["member"], None)
+            x = ev["member"]
+            self.turns[x] = ev.get("main")
+            self.inboxes[x] = [m for m in self.inboxes.get(x, ()) if m["seq"] > ev["delivered"]]
         elif self.also:  # a job's event, or a push, which changes no state: it is logged for the viewer and an export
             self.also(ev)
         if ev.get("nonce"):
@@ -183,9 +194,9 @@ class Team:
         self.messages[m["id"]] = m
         self.order.append(m)
         self.convs.setdefault(m["conv"], []).append(m)
-        self.wake[m["id"]] = ev["wakes"]
-        for x in ev["wakes"]:
-            self.pending.setdefault(x, []).append(m)
+        self.recipients[m["id"]] = ev["recipients"]
+        for x in ev["recipients"]:
+            self.inboxes.setdefault(x, []).append(m)
         issue = self.board.get(m["conv"])
         if issue:
             issue["updated"] = m["at"]
@@ -256,8 +267,8 @@ class Team:
         ev = self.nonces.get((who, nonce)) if nonce else None
         return ev["id"] if ev and ev["type"] == type_ else None
 
-    def wakes(self, conv: str, author: str, mentions: list, reply_to) -> list:
-        """Who a new message wakes."""
+    def addressed(self, conv: str, author: str, mentions: list, reply_to) -> list:
+        """Whom a new message is for."""
         if conv.startswith("dm:"):  # a mention in a DM doesn't show it to a third member
             return [x for x in conv.split(":")[1:] if x != author]
         issue = self.board.get(conv)
@@ -269,12 +280,13 @@ class Team:
     def post(self, conv: str, author: str, text: str, reply_to, nonce, change: dict = None, files=(),
              quiet: bool = False) -> dict:
         """A message, or with `change` the activity line of that board change. The line also tells whom the change
-        unassigned and whom a new issue's body @mentions. A quiet message is an activity line that wakes no one."""
+        unassigned and whom a new issue's body @mentions. A quiet message is an activity line for no one."""
         told = (change.get("body") or " ".join("@" + x for x in change.get("remove", ()))) if change else ""
         mentions = [] if quiet else self.mentions(text + "\n" + told)
         ev = self.append({"type": "message", "id": f"m{self.mcount + 1}", "conv": conv, "author": author,
                           "text": text, "reply_to": reply_to, "mentions": mentions, "activity": bool(change) or quiet,
-                          "nonce": nonce, "wakes": [] if quiet else self.wakes(conv, author, mentions, reply_to),
+                          "nonce": nonce,
+                          "recipients": [] if quiet else self.addressed(conv, author, mentions, reply_to),
                           **({"files": [self.files[f] for f in files]} if files else {})})
         return self.messages[ev["id"]]
 
@@ -285,18 +297,18 @@ class Team:
         return {"issue": self.issue_view(ev["id"])}
 
     def sees(self, x: str, m: dict) -> bool:
-        """m is in x's world: x wrote it, it woke x, or it's in a channel or an issue x is in."""
+        """m is in x's world: x wrote it, it is for x, or it's in a channel or an issue x is in."""
         where = self.channels.get(m["conv"]) or {}
         issue = self.board.get(m["conv"]) or {}
-        return (m["author"] == x or x in self.wake[m["id"]] or x in where.get("members", ())
+        return (m["author"] == x or x in self.recipients[m["id"]] or x in where.get("members", ())
                 or x in issue.get("subscribers", ()))
 
     def unread(self, x: str, m: dict) -> bool:
         return m["author"] != x and m["seq"] > self.marks.get((x, m["conv"]), 0) and self.sees(x, m)
 
-    def reasons(self, x: str) -> list:
-        """What would wake x now: the messages that woke x since x's last wake, less those x has read since."""
-        return [m for m in self.pending.get(x, ()) if m["seq"] > self.marks.get((x, m["conv"]), 0)]
+    def undelivered(self, x: str) -> list:
+        """The messages for x that no turn or delivery has shown, less those x has read."""
+        return [m for m in self.inboxes.get(x, ()) if m["seq"] > self.marks.get((x, m["conv"]), 0)]
 
     def issue_view(self, issue_id: str) -> dict:
         i = self.board[issue_id]
@@ -310,6 +322,20 @@ class Team:
         m = self.members[x]
         view = {"id": m["id"], "name": m["name"], "kind": m["kind"]}
         return {**view, "operator": True} if m.get("operator") else view
+
+    def mark_read(self, x: str, shown: list):
+        """Read marks for the messages shown to x. A conversation's mark moves only up to its first unread message
+        that was not shown, so a delivery never hides a message it left out."""
+        ids = {m["id"] for m in shown}
+        for conv in dict.fromkeys(m["conv"] for m in shown):
+            upto = 0
+            for m in self.convs[conv]:
+                if self.unread(x, m):
+                    if m["id"] not in ids:
+                        break
+                    upto = m["seq"]
+            if upto > self.marks.get((x, conv), 0):
+                self.append({"type": "read", "member": x, "conv": conv, "upto": upto})
 
     def find_issue(self, req: dict) -> str:
         i = req.get("id")
@@ -407,7 +433,7 @@ class Team:
             return {"channel": self.channel_view(name)}
 
     def join(self, who: str, req: dict, leave: bool = False) -> dict:
-        """Adds `who` to a channel's members, or to an issue's subscribers, whom its comments and changes wake. With
+        """Adds `who` to a channel's members, or to an issue's subscribers, whom its comments reach. With
         `leave`, removes them."""
         with self.lock:
             name = string(req, "name", 41).strip().lstrip("#")
@@ -476,30 +502,75 @@ class Team:
             return self.change({"type": "move", "id": i, "status": status, "note": note, "by": who, "nonce": nonce})
 
     def pushed(self, who: str, updates: list):
-        """A git push's ref updates, as server.py read them: an event each, which wakes no one."""
+        """A git push's ref updates, as server.py read them: an event each, for no one."""
         with self.lock:
             for u in updates:
                 self.append({"type": "push", "by": who, **u})
 
-    def sleep(self, who: str, req: dict, gone=lambda: False) -> dict:
-        """Waits up to req's timeout (at most 300 s) for messages that wake `who`, and returns them. `gone()` says the
-        caller has hung up. Only the member's newest sleep records a wake, and only while its caller is there to get
-        it: a wake recorded for no one would keep those messages from waking the next sleep."""
-        end = time.monotonic() + number(req, "timeout", 300, 0, 300)
+    # ---- waiting for messages
+
+    def inbox(self, who: str, req: dict) -> dict:
+        """The messages addressed to `who` that no turn or delivery has shown yet, oldest first: what reaches an agent
+        between its tool calls. They count as delivered and read."""
+        most = int(number(req, "limit", INBOX_MOST, 1, TURN_MOST))
         with self.lock:
-            ticket = self.sleeps[who] = object()
-            self.bells[who].notify_all()  # an older sleep still held ends
-            due = None  # when a wake that has begun returns
-            while True:
-                reasons, now = self.reasons(who), time.monotonic()
-                due = (due or min(now + SETTLE, end)) if reasons else None
-                if self.sleeps[who] is not ticket or (reasons and now >= due and gone()):
-                    reasons = []
-                    break
-                if reasons and now >= due:
-                    self.append({"type": "woke", "member": who, "upto": self.seq})
-                    break
-                if now >= end:
-                    break
-                self.bells[who].wait((due or end) - now)
-        return {"woke": bool(reasons), "reasons": reasons[:WAKE_MOST], "more": max(0, len(reasons) - WAKE_MOST)}
+            got = self.undelivered(who)[:most]
+            if got:
+                self.append({"type": "delivered", "member": who, "upto": got[-1]["seq"]})
+                self.mark_read(who, got)
+            return {"messages": got}
+
+    def hold(self, who: str, end: float, gone) -> bool:
+        """Under the lock: holds until messages addressed to `who` come, SETTLE seconds after the first so a burst
+        comes as one, or until `end` (time.time()). True if they came. Only the member's newest held call is
+        answered, and only while its caller is there to get it (`gone()` says it hung up)."""
+        ticket = self.holds[who] = object()
+        self.bells[who].notify_all()  # an older call still held ends
+        due = None  # when a hold that has heard a message returns
+        while True:
+            mail, now = self.undelivered(who), time.time()
+            due = (due or min(now + SETTLE, end)) if mail else None
+            if self.holds[who] is not ticket or (mail and now >= due and gone()):
+                return False
+            if mail and now >= due:
+                return True
+            if now >= end:
+                return False
+            self.bells[who].wait((due or end) - now)
+
+    def news(self, who: str, head) -> dict:
+        """Under the lock: what changed since `who`'s last turn, which starts its next turn."""
+        since, mail = self.turns.get(who), self.undelivered(who)
+        shown = mail[:TURN_MOST]
+        self.append({"type": "turn", "member": who, "main": head(), "delivered": shown[-1]["seq"] if shown else 0})
+        self.mark_read(who, shown)
+        channels = Counter(m["conv"] for m in self.order if m["conv"] in self.channels and self.unread(who, m))
+        return {"done": True, "messages": shown, "more": len(mail) - len(shown), "channels": dict(channels),
+                "since": since, "main": self.turns[who]}
+
+    def wait(self, who: str, req: dict, gone=lambda: False, head=lambda: None) -> dict:
+        """`who` has nothing to do until someone writes to it. Holds up to req's timeout (0 by default, at most
+        300 s) for messages addressed to it; returns what changed if they came, else {"done": false}. An agent that
+        waits starts its next turn on a message, or IDLE seconds after it began to wait."""
+        timeout = number(req, "timeout", 0, 0, 300)
+        with self.lock:
+            if who not in self.waiting:
+                self.append({"type": "wait", "member": who})
+            if self.hold(who, time.time() + timeout, gone) or (self.undelivered(who) and not gone()):
+                return self.news(who, head)
+            return {"done": False, "idle": self.waiting[who] + IDLE}
+
+    def next(self, who: str, req: dict, gone=lambda: False, head=lambda: None) -> dict:
+        """An agent's worker, between two turns: the next turn starts at once, unless the agent waits; then on a
+        message for it, or IDLE seconds after it began to wait. Holds up to req's timeout (at most 300 s), then
+        answers {"done": false}; call again."""
+        end = time.time() + number(req, "timeout", 300, 0, 300)
+        with self.lock:
+            if who in self.waiting:
+                start = self.waiting[who] + IDLE
+                if not self.hold(who, min(end, start), gone) and time.time() < start:
+                    return {"done": False}
+            return self.news(who, head)
+
+
+

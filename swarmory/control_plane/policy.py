@@ -15,7 +15,7 @@ from dataclasses import dataclass
 ANY, OWN = "any", "own"  # OWN: a member's own job (it asked for it), or a job or spend token's own job
 TABLE = {
     "server": {"operator": ANY},                       # start, list, status and stop runs, and export one
-    "team": {"operator": ANY, "member": ANY},          # chat, the board, sleep, the run's spend
+    "team": {"operator": ANY, "member": ANY},          # chat, the board, wait, the run's spend
     "view": {"view": ANY},                             # what the viewer polls, which holds every DM
     "git": {"operator": ANY, "member": ANY},
     "file.upload": {"operator": ANY, "member": ANY, "job": ANY},

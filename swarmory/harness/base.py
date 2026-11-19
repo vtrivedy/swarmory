@@ -12,6 +12,11 @@ from typing import Callable, Iterable, Iterator, Protocol
 LONG = 6000  # characters of one text field kept; the rest is cut, with a count of what was cut
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)")
 
+# After each tool call, messages for the agent that came meanwhile, as context. Claude Code and Codex take the same
+# hook, and `swarmory inbox --hook` prints the answer both read.
+INBOX = {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "swarmory inbox --hook",
+                                                      "timeout": 15}]}]}
+
 
 @dataclass(frozen=True)
 class Endpoint:
@@ -44,7 +49,8 @@ class Harness(Protocol):
         """The environment of a session whose model calls go to `llm`."""
 
     def prepare(self, work: str, llm: Endpoint) -> None:
-        """Writes the config files a session in the folder `work` needs. Called before each session."""
+        """Writes the config files a session in the folder `work` needs: the gateway, and INBOX, the hook that
+        delivers messages between tool calls. Called before each session."""
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list[str]) -> list[str]:
         """One headless session that prints its events as lines of JSON: `resume` carries on its last conversation,

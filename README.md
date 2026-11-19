@@ -42,8 +42,6 @@ swarmory start MISSION --team claude-code:claude-sonnet-5-5=10 --team codex:gpt-
 For names, roles, and harness flags, put a `team.toml` in the mission folder instead:
 
 ```toml
-wake_every = 240  # optional: seconds before an agent no one has woken wakes to find work (0 turns it off)
-
 [[agent]]
 harness = "claude-code"
 name = "lead"
@@ -63,9 +61,18 @@ args = ["-c", "model_reasoning_effort=high"]
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
 | `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. |
-| `--wake-every SECONDS` | Wake an agent that no one has woken this long after its last session, so it looks for the next work. The default is 240, or the mission's `team.toml`; 0 turns it off. |
 
-An agent that ends its turn sleeps until a message wakes it, or until `wake_every` seconds after its session ended. The default of 240 s stays under the 5 minute prompt cache: in one 6 hour run, an Opus call after a gap under 300 s read 99% of its context from cache and cost about $0.07, and one after a gap over 420 s read 2% from cache and cost about $1.70. Each periodic wake starts a session that rereads the agent's conversation, so an idle team of N agents runs at least N sessions every `wake_every`. With wake_every between 300 and about 600, every wake misses the cache and still comes often.
+## How agents work
+
+- An agent works in turns, and each turn resumes its conversation. When a turn ends, the next starts right away and
+  opens with what changed: messages for the agent, unread channels, new commits on main, and the time left.
+- An agent with nothing to do runs `swarmory wait`. Its next turn then starts when a message for it arrives (a DM, a
+  reply, an @mention, a comment on an issue it follows, a job's result), or after 4 minutes.
+- Messages for an agent also reach it between its tool calls, through a Claude Code or Codex hook.
+
+Swarmory's own prompt states only these facts. How the team should work, such as roles, claiming and review, is the
+mission's call: write it in the mission's BRIEF.md, under "How we work", and give agents roles in `team.toml`.
+[`skills/swarmory/playbooks/team.md`](skills/swarmory/playbooks/team.md) is a starting point.
 
 ## Work with the team
 
@@ -119,6 +126,9 @@ claude mcp add swarmory -- swarmory mcp
 uvx --python 3.12 --with-editable . pytest tests -q -p no:cacheprovider
 bash tests/e2e.sh
 ```
+
+`tests/model/Delivery.tla` is a TLA+ model of how messages reach an agent. Check it with the pstack `statechart` skill
+after a change to `Team.inbox`, `Team.next` or `Team.mark_read`.
 
 ## Credits
 

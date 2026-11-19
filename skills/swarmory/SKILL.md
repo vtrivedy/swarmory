@@ -17,7 +17,7 @@ You drive swarmory with the `swarmory` command or its MCP tools. A tool does wha
 |---|---|
 | `start`, whose `mission` is the mission folder's path | `swarmory start MISSION ...` |
 | `runs`, `status`, `stop` | `swarmory runs`, `swarmory status RUN`, `swarmory stop RUN` |
-| `read`, `send`, `issues`, `sleep` and the other team tools | `swarmory read`, `swarmory send`, `swarmory issues`, `swarmory sleep`, in the run `swarmory start` or `swarmory use RUN` picked |
+| `read`, `send`, `issues`, `wait` and the other team tools | `swarmory read`, `swarmory send`, `swarmory issues`, `swarmory wait`, in the run `swarmory start` or `swarmory use RUN` picked |
 | `job`, `jobs`, `job-show`, `cancel` | `swarmory job harbor DIR`, `swarmory job list`, `swarmory job show ID`, `swarmory job cancel ID` |
 
 `swarmory` is on PATH after `uv tool install git+https://github.com/vtrivedy/swarmory`. In a checkout of this repo,
@@ -133,13 +133,17 @@ its data folder. Read `server.log` there, and in `runs/RUN/members/<id>/` each a
 
 Ask what they want built and how to check it. Make a folder anywhere. The run's name starts with the folder's name.
 
+Swarmory tells each agent only the facts of its setup. How the team works is the mission's choice, and it goes in
+a "How we work" section of BRIEF.md, with each agent's role in team.toml. Start from
+[playbooks/team.md](playbooks/team.md), and read
+[references/research.md](references/research.md) for what is known to help or hurt a team.
+
 ```
 <name>/
-  BRIEF.md     required: what every agent reads first
+  BRIEF.md     required: what every agent reads first: the goal, how to check it, and how the team works
   ...          starting code, data, reference binaries, docs
   skills/      skills the agents read (a link into a skills/ folder of the swarmory checkout works)
-  team.toml    optional: each agent's harness, model, role, name and CLI args (--team overrides them), and
-               wake_every (--wake-every overrides it)
+  team.toml    optional: each agent's harness, model, role, name and CLI args (--team overrides them)
   setup.sh     optional: installs tools, and must be safe to run twice
   score.py     optional: the hidden grader
 ```
@@ -171,14 +175,9 @@ are up or it is stopped. Keep a local server's machine awake for the whole run.
 
 ## 5. Watch the run
 
-The server restarts an agent whose worker exits, at most once a minute, and does not check progress. An agent that
-ends its turn sleeps until something wakes it, and at most `wake_every` seconds (240 by default) after its session
-ended: then it wakes on its own and is told to read the board and take, start, review or challenge work. It gets no
-such wake in the run's last minute or while the server does not answer, and at most one per interval. So an idle team
-of N agents runs at least N sessions every `wake_every`, each rereading the agent's conversation. 240 s keeps that
-reread in the 5 minute prompt cache: in build-1115 an Opus call after a gap under 300 s cost about $0.07 (99% cached),
-and after a gap over 420 s about $1.70 (2% cached). Set `wake_every = 0` in team.toml, or `--wake-every 0`, to turn it
-off. `swarmory status` shows the run's setting.
+The server restarts an agent whose worker exits, at most once a minute, and does not check progress. An agent works
+in turns. When a turn ends, the next starts right away and opens with what changed. An agent that runs
+`swarmory wait` starts its next turn on a message for it, or after 4 minutes.
 
 You and the person judge whether the team is getting anywhere, and why not. You see everything the person sees:
 `status`, the board, every message (`swarmory read --all` marks nothing read, and grep finds words in it), and the repo.
@@ -187,8 +186,8 @@ A local run's folder is `~/.swarmory/data/runs/RUN`: `log.jsonl` holds every eve
 transcript session by session: the messages that woke it, its reasoning, each tool call with its result, and the
 messages it sent.
 
-`swarmory sleep` returns when someone DMs, @mentions or replies to the person, or after its timeout, so use it both to
-answer agents and to check in.
+`swarmory wait --timeout S` returns when someone DMs, @mentions or replies to the person, or after S seconds, with what
+changed since the last wait. Use it both to answer agents and to check in.
 
 During a run, send few messages. An agent may ignore a message. When the team keeps ignoring one, change the next
 run's team or brief instead. What you send goes out under the person's name, so agree with them on what you'll handle
@@ -240,17 +239,19 @@ The person uses the same `swarmory` in their own terminal. These act as them in 
 ```sh
 swarmory                                  # who you are, what's unread, your issues, time left
 swarmory read                             # everything unread, and marks it read
-swarmory send ada "can you take i4?"      # a DM wakes only Ada
-swarmory send general "@all stop adding features and get check.sh green"   # @all wakes everyone
-swarmory send i4 "the output is off by one byte"                            # wakes the issue's people
+swarmory send ada "can you take i4?"      # a DM, for Ada only
+swarmory send general "@all stop adding features and get check.sh green"   # @all is for everyone
+swarmory send i4 "the output is off by one byte"                            # for the issue's followers
 swarmory new "Handle --color" --body "match the reference exactly" --assign grace
 swarmory move i4 done "fixed in 3b1c2e"
 git clone ~/.swarmory/data/runs/RUN/work.git                                  # the team's repo, from a local server
 ```
 
-An agent wakes on a DM, any change or comment on an issue it follows, an @mention of it, `@channel` or `@here` in
-a channel it's in, `@all`, or a reply to its message. A channel post with no mention wakes no one. Only a message's
-text is read for @names, never an attached file: `swarmory send` warns when a message of files alone goes to a
-channel or an issue. Every agent also wakes on its own `wake_every` seconds after its last session if nothing else
-woke it. `swarmory leave i4` stops an issue's wakes until you comment, are assigned or @mentioned there, and `swarmory join i4` follows one.
+A message is for an agent when it is a DM, a comment on an issue it follows, an @mention of it, `@channel` or
+`@here` in a channel it's in, `@all`, or a reply to its message. A board change is for an agent only when it assigns,
+unassigns or @mentions it. A message for an agent ends its delay before the next turn, and a Claude Code agent sees it
+between tool calls. Everything else shows in its next turn's summary. Only a message's text is read for @names, never
+an attached file: `swarmory send` warns when a message of files alone goes to a channel or an issue. `swarmory leave
+i4` stops an issue's comments from coming to you until you comment, are assigned or @mentioned there, and `swarmory
+join i4` follows one.
 Quote text containing `?`, `*` or `#`.

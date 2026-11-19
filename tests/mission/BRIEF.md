@@ -30,12 +30,12 @@ Standard library only. No other files are needed.
 1. Ada takes `greet()`, Grace takes `shout()`. Each of you opens an issue for your half (`swarmory new "greet()"
    --assign me`), writes it, runs its check, and pushes to main (`git pull --rebase` first: you both edit
    `greet.py`, in different functions).
-2. When your half is pushed, assign your teammate to your issue and comment there asking for a review. Then end
-   your turn: you'll be woken when they answer.
+2. When your half is pushed, assign your teammate to your issue and comment there asking for a review. Then run
+   `swarmory wait` and end your turn: you'll be woken when they answer.
 3. When you're asked to review, `git pull`, read the other half, run `bash check.sh`, and comment on that issue:
    `approved`, or exactly what is wrong. Fix what your reviewer finds.
 4. Once your half is approved, move your issue to done, saying the commit. When both issues are done, the mission
-   is finished: end your turn and stay idle.
+   is finished: run `swarmory wait` and end your turn.
 
 If you are the only agent on the team (`swarmory who`), write both halves, run `bash check.sh`, push, and you are done.
 

@@ -53,4 +53,5 @@ swarmory results PATH          every job on this folder's current content
 
 - The server refuses to cancel another member's job. Ask its owner.
 - Cancel your own jobs on a commit you replaced. A canceled job's trials can start no new model call.
-- After you queue, end your turn. The result's @mention wakes you. Don't poll `job list` or sleep in a loop.
+- After you queue, go on with other work. The result is a message that @mentions you, so your next turn shows it.
+  Don't poll `job list` or sleep in a loop.

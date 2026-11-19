@@ -596,7 +596,7 @@ const S = {
   order: [],             // everyone in their stable place: agents by arrival, then humans
   kinds: new Map(),      // conv id -> 'channel' | 'issue', from the event that made it
   sentAt: new Map(),     // member -> when each of their messages was sent
-  begun: new Map(),      // member -> when each worker start and wake was
+  begun: new Map(),      // member -> when each worker start and turn was
   pushes: [],            // the pushes main took, for the time bar
   ledDirty: Infinity,    // the lowest ledger index inserted since the last fold
   loaded: false,         // caught up with the feed once
@@ -649,7 +649,7 @@ function ingest(j) {   // true when rows arrived
     if (e.type === 'member' && e.member && e.member.id) person(e.member.id, e.member);
     else if (e.type === 'channel' || e.type === 'issue') S.kinds.set(e.id, e.type);
     else if (e.type === 'message' && !e.activity) into(S.sentAt, e.author).push(e._t);
-    else if (e.type === 'worker' || e.type === 'woke') into(S.begun, e.member).push(e._t);
+    else if (e.type === 'worker' || e.type === 'turn') into(S.begun, e.member).push(e._t);
     else if (e.type === 'push' && e.ok && e.ref === MAIN) S.pushes.push(e);
   }
   for (const r of j.ledger || []) {
@@ -712,7 +712,7 @@ function cursor() { return S.follow ? present() : Math.min(Math.max(S.T, start()
 
 /* ================= activity: when each agent was at work, inferred from the model calls it made ================= */
 let activeBy = new Map();
-function activity() {   // agent -> [[from, to]]: runs of its model calls under ACTIVE_GAP apart, begun at the worker start or wake just before
+function activity() {   // agent -> [[from, to]]: runs of its model calls under ACTIVE_GAP apart, begun at the worker start or turn just before
   if (!changed('activity', S.led.length, S.ev.length)) return activeBy;
   activeBy = new Map();
   for (const r of S.led) {
@@ -751,11 +751,11 @@ function blank() {
     members: new Map(),    // id -> what they did up to here
     channels: new Map(), convs: new Map(), issues: new Map(), jobs: new Map(),
     sent: new Map(),       // 'from to' -> how many of from's messages were for to: a DM, a reply, a mention, a comment on an issue they follow
-    pend: new Map(),       // member -> the messages that will wake them, until they wake or read them
-    wokeBy: new Map(),     // message id -> who it woke
+    pend: new Map(),       // member -> the messages for them, until delivered or read
+    reached: new Map(),    // message id -> whom it was delivered to
     answered: new Map(),   // a DM's id -> seconds until the other side's next message
     answers: [], dms: 0,
-    notes: [],             // message ids whose wake or answer changed, in order: a painted conversation follows it
+    notes: [],             // message ids whose delivery or answer changed, in order: a painted conversation follows it
     pushes: [], flow: [],  // flow: [at, to do, doing, done] after each board change
     msgs: new Map(), nMsgs: 0, all: tally(),   // all: every member's model calls together
     thread: new Map(),     // message id -> its thread { id: the root's id, conv, items: [the root, ...replies] }
@@ -773,7 +773,7 @@ function fold(T) {
 }
 function stat(D, id) {
   let m = D.members.get(id);
-  if (!m) D.members.set(id, m = { id, sent: 0, direct: 0, wakes: 0, ...tally(), model: '', wokenBy: new Map(), did: [] });
+  if (!m) D.members.set(id, m = { id, sent: 0, direct: 0, deliveries: 0, ...tally(), model: '', heardFrom: new Map(), did: [] });
   return m;
 }
 function conv(D, id) {
@@ -800,7 +800,7 @@ function apply(D, e) {
     case 'message': {
       if (!e.conv) break;
       D.msgs.set(e.id, e);
-      for (const x of e.wakes || EMPTY) into(D.pend, x).push(e);
+      for (const x of e.recipients || EMPTY) into(D.pend, x).push(e);
       if (e.activity) {   // the prose line the control plane posts after a board change: the change itself is the item
         if (D.board && D.board.e.id === e.conv) D.board.told = e;
         D.board = null;
@@ -815,7 +815,7 @@ function apply(D, e) {
       c.n++; D.nMsgs++;
       const st = stat(D, e.author);
       st.sent++; did(D, e.author, it);
-      const to = new Set((e.wakes || e.mentions || EMPTY).filter(x => S.people.has(x)));   // whoever the control plane delivers it to
+      const to = new Set((e.recipients || e.mentions || EMPTY).filter(x => S.people.has(x)));   // whoever the control plane delivers it to
       if (c.kind === 'dm') {
         dmPeople(e.conv).forEach(x => to.add(x));
         D.dms++; st.direct++;
@@ -855,17 +855,18 @@ function apply(D, e) {
       boardItem(D, e, e.by);
       break;
     }
-    case 'read': {   // read while at work: it will not wake them
+    case 'read': {   // read while at work: no turn or hook delivers them again
       const q = D.pend.get(e.member);
       if (q) D.pend.set(e.member, q.filter(m => m.conv !== e.conv || m.seq > e.upto));
       break;
     }
-    case 'woke': {
+    case 'delivered': case 'turn': {   // messages shown between tool calls, or at a turn's start
+      const upto = e.type === 'turn' ? e.delivered || 0 : e.upto;
       const m = stat(D, e.member), q = D.pend.get(e.member) || EMPTY, by = new Set();
-      m.wakes++;
-      for (const x of q) if (x.seq <= e.upto) { into(D.wokeBy, x.id).push(e.member); D.notes.push(x.id); by.add(x.author); }
-      for (const a of by) bump(m.wokenBy, a);
-      D.pend.set(e.member, q.filter(x => x.seq > e.upto));
+      for (const x of q) if (x.seq <= upto) { into(D.reached, x.id).push(e.member); D.notes.push(x.id); by.add(x.author); }
+      if (by.size) m.deliveries++;
+      for (const a of by) bump(m.heardFrom, a);
+      D.pend.set(e.member, q.filter(x => x.seq > upto));
       break;
     }
     case 'push': {
@@ -1078,9 +1079,9 @@ function paintConv(v, id, D, stick) {
   decorate(v, D);
   if (grew && (fresh || stick || bottom)) v.sc.scrollTop = v.sc.scrollHeight;
 }
-function noteText(id, D) {   // what the log says came of a message: who it woke, and how soon the other side of a DM wrote next
-  const w = D.wokeBy.get(id), a = D.answered.get(id);
-  return [w && 'Woke ' + names(w), a != null && `The other side’s next message came ${dur(a)} later`].filter(Boolean).join(' · ');
+function noteText(id, D) {   // what the log says came of a message: whom it reached, and how soon the other side of a DM wrote next
+  const w = D.reached.get(id), a = D.answered.get(id);
+  return [w && 'Reached ' + names(w), a != null && `The other side’s next message came ${dur(a)} later`].filter(Boolean).join(' · ');
 }
 function note(row, id, D) {
   const t = noteText(id, D), mc = row.querySelector('.mc');
@@ -1504,7 +1505,7 @@ function renderPatterns(D, T) {
   // leaders
   const val = f => ags.map(id => [id, f(D.members.get(id), id)]);
   const s4 = section('g1', 'Leaders', box('div', 'lead',
-    ...leader('Most messages sent', val(m => m.sent), v => `${v} sent`), ...leader('Most often woken', val(m => m.wakes), times),
+    ...leader('Most messages sent', val(m => m.sent), v => `${v} sent`), ...leader('Most deliveries', val(m => m.deliveries), times),
     ...leader('Most commits', val((m, id) => main.by.get(id)?.n || 0), v => plural(v, 'commit')), ...leader('Biggest spender', val(m => m.usd), usd),
     ...leader('Most time active', val((m, id) => worked(sp.get(id))), dur)));
   $('patternsPane').replaceChildren(box('div', 'page', s1, box('div', 'split', s2, s3, s4)));
@@ -1563,7 +1564,7 @@ function renderAgentPage(id, D, T) {
   log.append(...acts.map(it => didRow(it, id, D)));
   if (!acts.length) log.append(el('div', 'none', 'No messages, pushes or issue moves yet at this point in the run.'));
   const talks = roster(D).filter(x => x !== id).map(x => [x, (D.sent.get(id + ' ' + x) || 0) + (D.sent.get(x + ' ' + id) || 0)]).filter(x => x[1]).sort((a, b) => b[1] - a[1]);
-  const woken = [...m.wokenBy].sort((a, b) => b[1] - a[1]).map(([x, n]) => `${nameOf(x)} ${times(n)}`);
+  const heard = [...m.heardFrom].sort((a, b) => b[1] - a[1]).map(([x, n]) => `${nameOf(x)} ${times(n)}`);
   const mine = [...D.issues.values()].filter(is => is.assignees.includes(id) || is.author === id).map(is => {
     const b = box('button', 'il', el('span', 'iid', is.id), ` ${is.title}, ${is.status === 'todo' ? 'to do' : is.status === 'doing' ? 'doing since ' + rel(is.since) : `${is.status} at ${rel(is.since)}`}`);
     b.dataset.conv = is.id;
@@ -1572,7 +1573,7 @@ function renderAgentPage(id, D, T) {
   const aside = box('aside', 'g2 aside',
     section(null, 'Talks with', talks.length ? box('div', 'bars talk', ...talks.flatMap(([x, n]) => [avatar(x, 22), el('span', 'nm', nameOf(x)), meter(n / talks[0][1], colorOf(x)), el('span', 'n', String(n))]))
       : el('div', 'none', 'Nobody yet.')),
-    section(null, 'Woken by', woken.length ? el('div', null, woken.join(', ')) : el('div', 'none', m.wakes ? `${plural(m.wakes, 'wake')}, none by a message.` : 'No wake recorded so far.')),
+    section(null, 'Messages from', heard.length ? el('div', null, heard.join(', ')) : el('div', 'none', 'No messages delivered so far.')),
     section(null, 'Issues', ...(mine.length ? mine : [el('div', 'none', 'None opened by or assigned to it.')])),
     section(null, 'Trace', link('Open the full trace', { view: 'agent', id, sub: 'trace' })));
   pane.replaceChildren(box('div', 'page', tiles, active, box('div', 'split', log, aside)));
@@ -1645,11 +1646,11 @@ function stepsOf(evs, t, kids, results, k, running) {   // a session's (or a sub
   const out = [], called = new Set(evs.filter(e => e.kind === 'tool').map(e => e.id));
   for (const e of evs) {
     const at = k + ':' + e.i;
-    if (e.kind === 'start') {   // a wake's prompt lists its messages as [mN conv] lines
-      const woke = messages([...e.prompt.matchAll(/^\[(m\d+) /gm)].map(x => x[1]));
-      const label = !e.resumed ? 'Started with its brief' : woke ? 'Woken by' : 'What swarmory told it';
-      out.push(step('told', 'chat', el('div', 'tmeta', label), ...(woke ? [woke] : []),
-        woke || !e.resumed ? folded([el('div', 'tmeta', woke ? 'The prompt it got' : oneLine(e.prompt, 200) + ' …')], e.prompt, at, t, 'tl')
+    if (e.kind === 'start') {   // a turn's prompt lists its messages as [mN conv] lines
+      const told = messages([...e.prompt.matchAll(/^\[(m\d+) /gm)].map(x => x[1]));
+      const label = !e.resumed ? 'Started with its brief' : told ? 'Messages for it' : 'What swarmory told it';
+      out.push(step('told', 'chat', el('div', 'tmeta', label), ...(told ? [told] : []),
+        told || !e.resumed ? folded([el('div', 'tmeta', told ? 'The prompt it got' : oneLine(e.prompt, 200) + ' …')], e.prompt, at, t, 'tl')
           : el('div', 'tl', e.prompt)));
     } else if (e.kind === 'init') {
       const what = [e.model, e.tools?.length && plural(e.tools.length, 'tool'), e.mcp?.length && 'MCP: ' + e.mcp.join(', ')].filter(Boolean).join(' · ');
@@ -1737,7 +1738,7 @@ function renderTrace(id, T) {
     let ended = null;
     for (const [no, evs] of by) {
       const begun = evs.find(e => e.kind === 'start')?.at;
-      if (ended && begun > ended) w.append(el('div', 'tsleep', `Slept ${span(begun - ended)}, until ${clock(begun)}`));
+      if (ended && begun > ended) w.append(el('div', 'tsleep', `Waited ${span(begun - ended)}, until ${clock(begun)}`));
       w.append(sessionBlock(id, t, no, evs, no === last, S.live && !S.ended));
       ended = evs.find(e => e.kind === 'end')?.at ?? null;
     }

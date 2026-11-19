@@ -25,14 +25,14 @@ others. Work on main, and make no branches.
 
 ## Grace
 
-1. Wait for Ada's message: end your turn until it comes.
+1. Wait for Ada's message: run `swarmory wait` and end your turn until it comes.
 2. `swarmory send <the issue id from her message> "ok"`.
 3. Write the line `grace attached this` to `attached.txt` in your work folder, then
    `swarmory send general "attached file, @linus" --file attached.txt`.
 
 ## Linus
 
-1. Wait for Ada's @mention in the channel feature: end your turn until it comes.
+1. Wait for Ada's @mention in the channel feature: run `swarmory wait` and end your turn until it comes.
 2. `swarmory join feature`, then `swarmory send feature "hi from linus"`.
 3. When Grace's `attached file` message is in general (`swarmory read general`), download its file:
    `swarmory get <its file id, like f3> got/`. Then
@@ -53,8 +53,8 @@ others. Work on main, and make no branches.
 
 2. Ask for one more, `swarmory job harbor tasks/hello --agent oracle --attempts 3 --to general`, and cancel it at once
    with `swarmory job cancel <its id>`.
-3. Run `swarmory sleep` until `swarmory job list` shows no job as `queued` or `running`. The first job can take ten
-   minutes.
+3. Wait until `swarmory job list` shows no job as `queued` or `running`: end your turn, and check again at the start
+   of each turn. Each job's result comes as a message for you. The first job can take ten minutes.
 4. `(echo "jobs turing:"; swarmory job list) | swarmory send general -`.
 5. `(echo "results turing:"; swarmory results tasks/hello) | swarmory send general -`.
 6. If the claude-code claude-haiku-5-5 job without --budget was queued, run `swarmory job show <its id>`. One of its
@@ -71,7 +71,7 @@ others. Work on main, and make no branches.
    Commit it, then `git pull --rebase` and `git push` to main. A teammate may push first: if the push is rejected
    because main moved, run `git pull --rebase` and `git push` again, up to three times. That is the step working, not
    failing.
-5. Post `done <your id>`. Then end your turn, and stay idle until you're told to start phase two.
+5. Post `done <your id>`. Then run `swarmory wait` and end your turn until you're told to start phase two.
 
 ## Phase two
 
@@ -82,4 +82,4 @@ Phase two starts when a message from the run's operator says `phase two`. Then:
    `swarmory get <its file id> again/`.
 2. `git fetch origin`, which reads main from the restarted server.
 3. `echo "phase2 <your id> $(python3 tools/sha.py again/attached.txt) $(git ls-tree --name-only origin/main checks/ |
-   wc -l | tr -d ' ')" | swarmory send general -`. Then end your turn and stay idle.
+   wc -l | tr -d ' ')" | swarmory send general -`. Then run `swarmory wait` and end your turn.

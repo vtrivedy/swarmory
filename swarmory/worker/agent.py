@@ -1,15 +1,15 @@
-"""An agent's life: clone the repo, then until the deadline run a session of its coding agent, sleep in `swarmory sleep`
-until something needs it, and resume. The server's supervisor starts it through a backend and sets its SWARMORY_*
-environment: SWARMORY_URL, the token it minted for this start, and the agent's settings. What it knows about the coding
-agent comes from that harness's file in swarmory/harness/. Standard library only: it runs on the agent's machine.
-An agent no one wakes is woken anyway SWARMORY_WAKE_EVERY seconds after its last session ends, to find work.
+"""An agent's life: clone the repo, then until the deadline run one turn after another, each a session of its coding
+agent that resumes the same conversation. Between turns `swarmory next` holds the agent until the server says the next
+turn starts, and gives what changed, which is the next turn's prompt. The server's supervisor starts it through a
+backend and sets its SWARMORY_* environment: SWARMORY_URL, the token it minted for this start, and the agent's settings.
+What it knows about the coding agent comes from that harness's file in swarmory/harness/. Standard library only: it
+runs on the agent's machine.
 
 Its HOME is a folder of SWARMORY_DIR, which outlives its machine, so a restart finds the coding agent's conversations
 where it left them. Everything it starts runs in its own process group, which it leads. The deadline stops a session,
 and at its end, by the deadline or a stop, the worker sends its sessions' last lines and then stops the whole group."""
 import contextlib
 import json
-import math
 import os
 import signal
 import subprocess
@@ -18,16 +18,14 @@ import threading
 import time
 from pathlib import Path
 
-from swarmory import POST_BUFFER, WAKE_EVERY, harness
+from swarmory import POST_BUFFER, harness
 from swarmory.harness.base import Endpoint
 from swarmory.worker import LAST
 
 TICK = 5  # seconds between trace uploads, and between tries at the first clone
 SYNC = 60  # seconds between syncs of SWARMORY_DIR: a lost machine loses at most this much of the running session
-RETRY = 60  # seconds before a failed session or a failed `swarmory sleep` is tried again
+RETRY = 60  # seconds before a failed session or a failed `swarmory next` is tried again
 GRACE = 30  # seconds a command gets to stop at the deadline before it is killed
-LATE = 60  # seconds before the deadline after which no periodic wake starts a session
-IDLE = "No one has woken you for a few minutes"  # how a periodic wake's prompt starts
 ENV = os.environ
 DEADLINE = int(ENV.get("SWARMORY_DEADLINE") or 0)
 
@@ -44,18 +42,6 @@ def nap(seconds: float):
     time.sleep(max(0, min(seconds, left())))
 
 
-def periodic() -> str:
-    """The prompt of a wake that no one sent: the agent slept `every` seconds and the run still has time."""
-    hours, minutes = divmod(int(left() // 60), 60)
-    return (f"{IDLE}, and the run has {f'{hours} h ' if hours else ''}{minutes} min "
-            "left. Run `swarmory` and `git log` to see the board. Then pick or make work: claim an open item, open a "
-            "new idea, repair a draft upward, or add seeds or trials to a candidate. Or review, break or debate a "
-            "teammate's work. Tell its owner only what they need to act on, never with @all, and don't post that you "
-            "are idle or what you plan. End your turn only after you have started something real: a commit, a job, "
-            "a posted review or a claimed item. If a Harbor job you asked for is running (`swarmory job list --mine`), "
-            "check it; its result wakes you.")
-
-
 class Agent:
     def __init__(self):
         self.harness = harness.named(ENV["SWARMORY_HARNESS"])
@@ -66,7 +52,6 @@ class Agent:
         self.conversations = Path.home() / self.harness.home / self.harness.conversations
         self.model = ENV.get("SWARMORY_MODEL") or None
         self.args = [a for a in ENV.get("SWARMORY_ARGS", "").split("\n") if a]  # team.toml's args, one per line
-        self.every = float(ENV.get("SWARMORY_WAKE_EVERY") or WAKE_EVERY)  # the run's wake_every; 0 is never
         self.running = None  # the command run() waits on
         self.lock = threading.Lock()  # the saver and a session's end both upload
 
@@ -167,27 +152,16 @@ class Agent:
                 "Your clone,\nthe board and the chat are as you left them: run `swarmory` and `git log` to see where "
                 "things stand.")
 
-    def wake(self, every: float = None) -> str:
-        """Sleeps in `swarmory sleep` until something needs the agent: the wake line, the next session's prompt. With
-        no wake for `every` seconds (the run's) from now, the end of the last session, it wakes the agent anyway with
-        periodic(), unless the deadline is under LATE seconds off by then. That wake waits for a sleep that reached
-        the server: while the server is down a session could only fail. Empty at the deadline."""
-        every = self.every if every is None else every
-        later = lambda t: t if DEADLINE - t >= LATE else math.inf  # noqa: E731
-        due, reached = later(time.time() + every) if every else math.inf, False
+    def turn(self) -> str:
+        """Holds in `swarmory next` until the agent's next turn starts (at once, unless it waits), and returns what
+        changed since its last turn: the next turn's prompt. Empty at the deadline."""
         while left() > 0:
-            if time.time() >= due:
-                if reached:
-                    return periodic()
-                due = later(time.time() + RETRY)  # once a sleep reaches the server again
-            code, woke = self.run(["swarmory", "sleep", "--timeout", str(math.ceil(min(left(), due - time.time())))],
-                                  stdout=subprocess.PIPE, text=True)
-            if code == 0 and woke.strip():
-                return woke.rstrip("\n")
-            reached = code in (0, 4)  # 4 is a timeout
-            if not reached and left() > 0:
-                say(f"swarmory sleep failed ({code}), retrying in {RETRY}s")
-                nap(min(RETRY, max(0, due - time.time())))
+            code, out = self.run(["swarmory", "next"], stdout=subprocess.PIPE, text=True)
+            if code == 0:
+                return out.rstrip("\n")
+            if left() > 0:
+                say(f"swarmory next failed ({code}), retrying in {RETRY}s")
+                nap(RETRY)
         return ""
 
     def spent(self) -> bool:
@@ -215,28 +189,28 @@ class Agent:
         if self.started():
             prompt = ("Your machine restarted. Your conversation and your clone are as you left them. "
                       + self.run(["swarmory"], stdout=subprocess.PIPE, text=True)[1].rstrip("\n"))
-        news, fails = "", 0  # the wake a session started on, repeated to its retries; failed sessions in a row
+        news, fails = "", 0  # the changes a turn started on, repeated to its retries; failed sessions in a row
         while left() > 0:
             last, fresh = self.session(prompt, fresh), ""
             if left() <= 0:
                 break
-            if last and self.spent():  # no call can succeed: sleep until a message, and keep the conversation
-                say("the run's budget is spent: sleeping until a message wakes this agent")
+            if last and self.spent():  # no call can succeed: wait for a message, and keep the conversation
+                say("the run's budget is spent: waiting for a message for this agent")
                 fails = 0
-                prompt = news = self.wake(every=0)
+                self.run(["swarmory", "wait"], stdout=subprocess.DEVNULL)
+                prompt = news = self.turn()
                 continue
             if last:  # a failed session is retried a minute later, until the deadline
                 fails += 1
                 say(f"retrying in {RETRY}s")
                 nap(RETRY)
-                news = periodic() if news.startswith(IDLE) else news  # its time left, now
-                prompt = f"Your last session ended with exit {last}." + (f" {news}" if news else "")
+                prompt = f"Your last session ended with exit {last}." + (f"\n\n{news}" if news else "")
                 if fails >= 2:
                     fresh = self.set_aside(fails, last)
                     fails = 0
                 continue
             fails = 0
-            prompt = news = self.wake()
+            prompt = news = self.turn()
         say(f"Deadline reached after {self.count()} sessions.")
 
 

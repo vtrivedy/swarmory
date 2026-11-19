@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from .base import Endpoint, Login, cut, other, records, short, text_of
+from .base import INBOX, Endpoint, Login, cut, other, records, short, text_of
 
 DOCS = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", ".claude/rules/**")  # instructions it reads on its own
 
@@ -25,11 +25,13 @@ class ClaudeCode:
         return {"ANTHROPIC_BASE_URL": f"{llm.url}/anthropic", "ANTHROPIC_API_KEY": llm.token}
 
     def prepare(self, work: str, llm: Endpoint) -> None:
-        """Excludes the instruction files in every folder above `work`, which it would read: locally, swarmory's own."""
+        """Excludes the instruction files in every folder above `work`, which it would read (locally, swarmory's own),
+        and adds the hook that delivers messages between tool calls."""
         above = Path(os.path.realpath(work)).parents  # real: as the session sees its cwd
         settings = Path.home() / self.home / "settings.json"
         settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps({"claudeMdExcludes": [str(d / f) for d in above for f in DOCS]}) + "\n")
+        settings.write_text(json.dumps({"claudeMdExcludes": [str(d / f) for d in above for f in DOCS],
+                                        "hooks": INBOX}) + "\n")
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "-p", *(["--continue"] if resume else []), prompt, "--output-format", "stream-json",

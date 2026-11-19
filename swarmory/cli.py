@@ -4,7 +4,7 @@ server at the operator's login, and `swarmory start` starts a local server first
 server on this machine, and deploy puts one on Modal.
 
 A login is ~/.swarmory/login (or SWARMORY_LOGIN): a member's is its run's address and its token; the operator's is the
-server's address, the operator token, and the run its verbs act in. Exit codes: 0 ok, 1 error, 2 bad usage, 4 `sleep`
+server's address, the operator token, and the run its verbs act in. Exit codes: 0 ok, 1 error, 2 bad usage, 4 `wait`
 timed out."""
 import argparse
 import base64
@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from swarmory import HOURS, PORT, POST_BUFFER, TRACE_MOST, WAKE_EVERY
+from swarmory import HOURS, PORT, POST_BUFFER, TRACE_MOST
 
 USAGE = f"""\
 swarmory                                 who you are, what's unread, your issues, the run
@@ -35,11 +35,11 @@ swarmory read [CONV] [--all] [--limit N] unread messages, everywhere or in one c
 swarmory send TO TEXT... [--reply ID] [--file PATH]...
                                          TO is a channel, a member (a DM) or an issue (a comment); a TEXT of - reads
                                          stdin. --file attaches a file, repeatable; the message can then have no text,
-                                         but then it wakes no one in a channel: @names wake only in the text
+                                         but then it is for no one in a channel: @names count only in the text
 swarmory get ID [DIR]                    download a file shared in a message (an id like f3) into DIR (default .)
 swarmory who                             the team and its channels
 swarmory channel NAME [--about TEXT]     make a channel     swarmory join NAME     swarmory leave NAME
-swarmory join ID                         follow an issue: its comments and changes wake you
+swarmory join ID                         follow an issue: its comments come to you
 swarmory leave ID                        stop following it, until you comment, are assigned or @mentioned
 swarmory issues [--mine] [--status S]    the board: open issues, or those with status S
 swarmory issue ID                        one issue and its whole thread
@@ -61,7 +61,9 @@ swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|moda
 swarmory job list [--mine]  ·  swarmory job show ID  ·  swarmory job cancel ID
 swarmory results PATH                    every job in this run on exactly this folder content, with its result
 swarmory spend                           what the run's model calls have cost, by member, and the run's budget
-swarmory sleep [--timeout S]             sleep until something needs you: exit 0 woken, 4 timed out
+swarmory wait [--timeout S]              say you have nothing to do until someone writes: an agent's next turn
+                                         starts on a message, or after 4 minutes. --timeout holds up to S seconds
+                                         (at most 300) for a message: exit 4 if none came
 swarmory login URL [TOKEN]               save the run's (or server's) address and your token; `swarmory login` prints it
 Every command but serve, deploy and mcp takes --json, which prints its answer's data. Put -- before text that starts
 with --.
@@ -83,15 +85,17 @@ COMMANDS = {
     "send": (1, None, ("--reply=", "--file=")), "get": (1, 2, ()),
     "channel": (1, 1, ("--about=",)), "join": (1, 1, ()), "leave": (1, 1, ()), "issue": (1, 1, ()),
     "issues": (0, 0, ("--mine", "--status=")), "new": (1, None, ("--body=", "--assign=")), "assign": (2, None, ()),
-    "move": (2, None, ()), "sleep": (0, 0, ("--timeout=",)), "login": (0, 2, ()),
-    # agent.py's, so not in USAGE: sends the server new bytes of a folder's session files and of agent.log
-    "trace": (1, 1, ()),
+    "move": (2, None, ()), "wait": (0, 0, ("--timeout=",)), "login": (0, 2, ()),
+
+    # agent.py's and its hook's, so not in USAGE: sends the server new bytes of a folder's session files and of
+    # agent.log; holds until the next turn and prints what changed; prints messages that came during a turn
+    "trace": (1, 1, ()), "next": (0, 0, ()), "inbox": (0, 0, ("--hook",)),
     # any other --PARAM VALUE of `swarmory job` is Harbor's, which the server checks
     "job": (1, 2, ("--hours=", "--budget=", "--to=", "--mine")), "results": (1, 1, ()), "spend": (0, 0, ()),
     "use": (1, 1, ()), "runs": (0, 0, ()), "status": (0, 1, ()), "stop": (0, 1, ()), "export": (0, 2, ()),
 }
 FIELD = {"--all": "all", "--limit": "limit", "--reply": "reply_to", "--about": "about", "--mine": "mine",
-         "--status": "status", "--body": "body", "--assign": "assignees"}
+         "--status": "status", "--body": "body", "--assign": "assignees", "--why": "why"}
 NONCE = ("send", "channel", "new", "assign", "move", "job")  # each carries a nonce, so one sent twice acts once
 UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029]")
 LOGIN = os.environ.get("SWARMORY_LOGIN") or os.path.expanduser("~/.swarmory/login")
@@ -404,8 +408,9 @@ def request(cmd, pos, opts):
 
 
 def unheard(text, paths, conv):
-    """The warning for a message of files alone outside a DM, or None: it wakes no one in a channel, and only its
-    followers in an issue, since @names in a file wake no one. Names in a small text file are pointed out."""
+    """The warning for a message of files alone outside a DM, or None: it is for no one in a channel, and only for
+    the issue's followers in an issue, since @names in a file count for nothing. Names in a small text file are
+    pointed out."""
     from swarmory.control_plane.team import MENTION
     if text or not paths or conv.startswith("dm:"):
         return None
@@ -417,29 +422,45 @@ def unheard(text, paths, conv):
                     named += MENTION.findall(f.read())
         except (OSError, UnicodeDecodeError):
             pass
-    said = ("this message has no text, so it wakes %s: @names wake only in the text, not in a file"
+    said = ("this message has no text, so it reaches %s: @names count only in the text, not in a file"
             % ("only the issue's followers" if re.fullmatch(r"i\d+", conv) else "no one"))
     if named:
-        said += ". The file names %s: to wake them, send again with the names in the text" % ", ".join(
+        said += ". The file names %s: to reach them, send again with the names in the text" % ", ".join(
             "@" + n for n in dict.fromkeys(named))
     return said
 
 
-def sleep(seconds):  # long-polls up to 300 s at a time; exit 1 if the server was unreachable at the timeout
-    end, r, err = time.time() + seconds, None, None
+def next_turn():
+    """agent.py's: holds until the agent's next turn starts, in calls of at most 300 s, and returns what changed.
+    While the server does not answer, it asks again every 5 s: the worker's deadline ends the wait."""
     while True:
-        hold = round(max(0, min(300, end - time.time())), 3)
         try:
-            r, err = post("sleep", {"timeout": hold}, hold + 30), None
-        except ConnectionError as e:
-            err = e
-            time.sleep(max(0, min(2, end - time.time())))
-        if r and r["data"]["woke"]:
-            return r, 0
-        if time.time() >= end:
-            if err:
-                fail(err)
-            return r, 4
+            r = post("next", {"timeout": 300}, 330)
+            if r["data"]["done"]:
+                return r
+        except ConnectionError:
+            time.sleep(5)
+
+
+INBOX_EVERY = 10  # seconds between the hook's asks: it runs after every tool call
+
+
+def inbox_hook():
+    """Claude Code's PostToolUse hook (harness/claude_code.py): the messages for this agent that came during its turn,
+    as context for the model. It asks the server at most every INBOX_EVERY seconds, and never fails the tool call."""
+    asked = Path(os.path.dirname(LOGIN)) / "inbox-asked"
+    try:
+        if time.time() - asked.stat().st_mtime < INBOX_EVERY:
+            return
+    except OSError:
+        pass
+    try:
+        asked.touch()
+        text = post("inbox", {}, 10)["text"]
+    except Exception:  # noqa: BLE001: the tool call goes on without messages
+        return
+    if text:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
 
 
 def login(pos):
@@ -517,23 +538,22 @@ def parse_team(specs: list) -> list:
     return team
 
 
-def read_team(path: Path) -> tuple:
-    """A mission's team.toml as (the start verb's team, its wake_every or None). It holds [[agent]] entries: each is a
-    team entry, which the server checks, and may have a count (default 1) of agents like it. The team is None when it
-    has none: --team gives it. A top-level wake_every is the run's, which the server checks too."""
+def read_team(path: Path):
+    """A mission's team.toml as the start verb's team. It holds [[agent]] entries: each is a team entry, which the
+    server checks, and may have a count (default 1) of agents like it."""
     try:
         doc = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:
         fail("%s: %s" % (path, e))
-    entries, every, team = doc.pop("agent", None), doc.pop("wake_every", None), []
-    if doc or not isinstance(entries, list | None) or not all(isinstance(e, dict) for e in entries or ()):
-        fail("%s: want [[agent]] entries, and wake_every if you like, and nothing else" % path)
-    for n, e in enumerate(entries or (), 1):
+    entries, team = doc.pop("agent", None), []
+    if doc or not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        fail("%s: want [[agent]] entries and nothing else" % path)
+    for n, e in enumerate(entries, 1):
         count = e.pop("count", 1)
         if type(count) is not int or count < 1 or e.get("name") and count > 1:
             fail("%s: [[agent]] %d: count is 1 or more, and a name is one agent's, so it takes no count" % (path, n))
         team += [e] * count
-    return (team if entries is not None else None), every
+    return team
 
 
 def start_run(mission, team=None, **options) -> dict:
@@ -546,11 +566,8 @@ def start_run(mission, team=None, **options) -> dict:
     if not (mission / "BRIEF.md").is_file():
         fail("%s is not a mission: it has no BRIEF.md" % mission)
     toml = mission / "team.toml"
-    told, every = read_team(toml) if toml.is_file() else ([{"harness": harness.HARNESSES[0].name}] * 2, None)
     if team is None:  # not given: one given empty goes as it is, and the server refuses it
-        team = told if told is not None else fail("%s has no [[agent]] entries: add some, or give --team" % toml)
-    if options.get("wake_every") is None and every is not None:
-        options["wake_every"] = every
+        team = read_team(toml) if toml.is_file() else [{"harness": harness.HARNESSES[0].name}] * 2
     me = (subprocess.run(["git", "config", "user.name"], capture_output=True, text=True).stdout.split()
           or [os.environ.get("USER", "")])[0]  # your id in the run: your first name from git
     d = saved()
@@ -598,13 +615,10 @@ def start(argv):
     p.add_argument("--jobs", action="store_true", help="let members ask for jobs with `swarmory job`: Harbor evals "
                    "of the task folders they commit")
     p.add_argument("--subscription", action="store_true", help="call models with the server's subscription logins")
-    p.add_argument("--wake-every", type=int, metavar="SECONDS", help="wake an agent no one has woken this "
-                   "long after its last session, to find work; 0 never (default: the mission's team.toml, else "
-                   f"{WAKE_EVERY})")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     r = start_run(a.mission, a.team and parse_team(a.team), hours=a.hours, budget=a.budget, grant=a.grant or [],
-                  allow=a.allow or [], jobs=a.jobs, subscription=a.subscription, wake_every=a.wake_every)
+                  allow=a.allow or [], jobs=a.jobs, subscription=a.subscription)
     show(r, {"--json": a.json})
     if not a.json:
         out("Pushed the mission to main: the agents are starting. `swarmory` now acts as you in this run.")
@@ -677,7 +691,7 @@ def mcp():
             if paths:
                 args["files"] = [upload(path, at, token) for path in paths]
             nonce = {"nonce": secrets.token_hex(8)} if name in NONCE else {}
-            data = fetch(at, "/api/" + name, token, {**args, **nonce}, 310 if name == "sleep" else 60)["data"]
+            data = fetch(at, "/api/" + name, token, {**args, **nonce}, 310 if name in ("wait", "next") else 60)["data"]
             said = paths and unheard(args.get("text"), paths, data["message"]["conv"])
             return {**data, "warning": said} if said else data
         except (Refused, ConnectionError) as e:  # the model reads why, and can act on it
@@ -733,9 +747,14 @@ def command(argv):
     elif cmd == "login":
         r = login(pos)
         r = {"data": r, "text": "Logged in to %s." % r["url"] if pos else r["url"]}
-    elif cmd == "sleep":
-        r, code = sleep(number(opts.get("--timeout", "300"), "--timeout"))
-        r = r or {"data": {"woke": False}, "text": "Nothing woke you."}  # it never reached the server
+    elif cmd == "inbox" and opts.get("--hook"):
+        return inbox_hook()
+    elif cmd == "next":
+        r = next_turn()
+    elif cmd == "wait":
+        seconds = number(opts.get("--timeout", "0"), "--timeout")
+        r = post("wait", {"timeout": seconds}, seconds + 30)
+        code = 4 if seconds and not r["data"]["done"] else 0
     elif cmd == "get":
         r = get(pos)
         r = {"data": r, "text": "Saved %s to %s." % (r["file"], r["path"])}

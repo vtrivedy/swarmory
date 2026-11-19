@@ -119,7 +119,7 @@ def main(records: Path, local: bool, subscription: bool) -> int:
                                       for e in log))
     check("ada made the channel feature", any(e["type"] == "channel" and e["id"] == "feature" and e.get("by") == "ada"
                                               for e in log))
-    check("ada's @mention woke linus, who joined and said hi",
+    check("ada's @mention reached linus, who joined and said hi",
           any(m["conv"] == "feature" and m["author"] == "ada" and "linus" in m.get("mentions", []) for m in said)
           and any(e["type"] == "join" and e["id"] == "feature" and e["member"] == "linus" for e in log)
           and any(m["conv"] == "feature" and m["author"] == "linus" and "hi from linus" in m["text"] for m in said))

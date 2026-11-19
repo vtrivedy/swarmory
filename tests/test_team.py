@@ -1,5 +1,5 @@
 """The team model, and a run on the one server, where a bug would be silent: whom a token lets in and which DMs it
-shows, the push log, the seed, and replaying the log after a crash."""
+shows, the push log, the seed, replaying the log after a crash, and a message whose names are only in a file."""
 import json
 import os
 import shutil
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import code
 
-from swarmory import seed
+from swarmory import cli, seed
 from swarmory.control_plane.policy import sha
 from swarmory.control_plane.team import Team
 
@@ -123,8 +123,10 @@ def test_the_seed_is_the_mission_less_the_grader_its_secrets_and_what_its_gitign
     work = tmp_path / "w"
     remote = run.url.replace("://", f"://vivek:{served.token}@") + "/git/work.git"
     subprocess.run(["git", "clone", "-q", remote, str(work)], check=True, capture_output=True)
-    assert sorted(git_in(work, "ls-files").split()) == [".gitignore", "BRIEF.md", "lib/score.py", "lib/x.py",
-                                                        "skill/SKILL.md"]
+    skill = sorted("skill/" + str(f.relative_to(seed.HERE / "skills" / "swarmory"))
+                   for f in (seed.HERE / "skills" / "swarmory").rglob("*") if f.is_file())
+    assert sorted(git_in(work, "ls-files").split()) == [".gitignore", "BRIEF.md", "lib/score.py", "lib/x.py", *skill]
+    assert "skill/SKILL.md" in skill
 
 
 def busy(t: Team):
@@ -142,13 +144,13 @@ def busy(t: Team):
     t.leave("ken", {"name": "i2"})
     t.send("vivek", {"to": "dm:ada:vivek", "text": "status?", "nonce": "s8"})
     t.read("ada", {"limit": 2})
-    assert t.sleep("grace", {"timeout": 0})["woke"], "grace's @mention should have woken her"
+    assert t.wait("grace", {"timeout": 0})["done"], "grace's @mention should have woken her"
 
 
 def views(t: Team) -> list:
     """What each member sees, each woken by what would wake them."""
     return [(t.me(x, {}), t.issues(x, {}), t.issues(x, {"status": "done"}), t.issue(x, {"id": "i1"}),
-             t.issue(x, {"id": "i2"}), t.read(x, {"all": True, "limit": 1000}), t.sleep(x, {"timeout": 0}))
+             t.issue(x, {"id": "i2"}), t.read(x, {"all": True, "limit": 1000}), t.next(x, {"timeout": 0}))
             for x in IDS]
 
 
@@ -177,3 +179,37 @@ def test_the_log_replays_to_what_everyone_saw_and_a_torn_last_line_is_dropped(tm
     (tmp_path / "bad" / "log.jsonl").write_bytes(good.replace(b"\n", b"\nnot json\n", 1))
     with pytest.raises(ValueError):
         Team(tmp_path / "bad")
+
+
+def test_a_message_of_files_alone_wakes_no_one_in_a_channel_and_send_says_so(tmp_path, monkeypatch, capsys):
+    team = make(tmp_path / "run")
+
+    def place(fid):
+        (tmp_path / "run" / "files").mkdir(exist_ok=True)
+        (tmp_path / "run" / "files" / fid).write_bytes(b"@grace @all please take i4\n")
+
+    note = team.upload("vivek", "note.txt", 28, place)["file"]["id"]
+    sent = team.send("vivek", {"to": "general", "text": "", "files": [note]})["message"]
+    assert sent["mentions"] == [] and team.recipients[sent["id"]] == []  # the server never reads a file for names
+
+    small, big, binary = tmp_path / "note.txt", tmp_path / "big.txt", tmp_path / "bin"
+    small.write_text("@grace @alan please take i4\n@grace again\n")
+    big.write_text("@grace " + "x" * (16 << 10))
+    binary.write_bytes(b"@grace \xff\xfe")
+    said = cli.unheard("", [str(small)], "general")
+    assert "reaches no one" in said and "@grace, @alan" in said and "names in the text" in said
+    assert "only the issue's followers" in cli.unheard("", [str(small)], "i4")
+    for f in (big, binary):
+        assert "@grace" not in cli.unheard("", [str(f)], "general")
+    assert cli.unheard("", [str(small)], "dm:ada:vivek") is None  # a DM wakes its other member regardless
+    assert cli.unheard("see the note", [str(small)], "general") is None
+
+    monkeypatch.setattr(cli, "upload", lambda path, url, token: "f1")
+    monkeypatch.setattr(cli, "load_login", lambda: ("http://127.0.0.1:1", "t"))
+    for to, conv in (("general", "general"), ("ada", "dm:ada:vivek")):
+        monkeypatch.setattr(cli, "call", lambda cmd, body, retry=True, conv=conv: {
+            "data": {"message": {"id": "m1", "conv": conv}}, "text": f"Sent m1 to {conv}."})
+        with pytest.raises(SystemExit):
+            cli.command(["send", to, "--file", str(small)])
+        err = capsys.readouterr().err
+        assert ("swarmory: warning: this message has no text, so it reaches no one" in err) == (to == "general"), err

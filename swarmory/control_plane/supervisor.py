@@ -19,7 +19,7 @@ from swarmory import harbor
 from swarmory.backends.base import WorkerSpec
 
 from .policy import sha
-from .team import SYSTEM
+from .team import IDLE, SYSTEM
 
 TICK = 5  # seconds between ticks
 RESTART = 60  # an agent's worker starts at most once a minute
@@ -67,6 +67,7 @@ def prompt(config: dict, member: dict) -> str:
     return string.Template(PROMPT.read_text()).safe_substitute(
         name=member["name"], id=member["id"], n=len(agents), roster="\n".join(roster),
         role=f"Your role: {member['role']}\n\n" if member.get("role") else "",
+        idle=f"{IDLE // 60}",
         deadline=time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(config["deadline"])))
 
 
@@ -124,8 +125,7 @@ class Supervisor:
             {"SWARMORY_URL": f"{self.url}/r/{run.id}", "SWARMORY_TOKEN": token, "SWARMORY_ID": member["id"],
              "SWARMORY_NAME": member["name"], "SWARMORY_HARNESS": member["harness"],
              "SWARMORY_MODEL": member.get("model") or "", "SWARMORY_DEADLINE": str(c["deadline"]),
-             "SWARMORY_PROMPT": prompt(c, member), "SWARMORY_ARGS": "\n".join(member.get("args") or ()),
-             "SWARMORY_WAKE_EVERY": str(c.get("wake_every", 0))},  # a run from before wake_every has none
+             "SWARMORY_PROMPT": prompt(c, member), "SWARMORY_ARGS": "\n".join(member.get("args") or ())},
             tuple(c.get("grants", ())), (self.host, *c.get("allow", ())), f"runs/{run.id}/members/{member['id']}")
 
     def job(self, run, claimed: dict) -> WorkerSpec:

@@ -10,13 +10,13 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Callable
 
-from swarmory import HOURS, WAKE_EVERY
+from swarmory import HOURS
 
-from .jobs import described
+from .jobs import described, git
 from .policy import TABLE, sha
 from .proxy import money
 from .runs import new_run, state, view_token
-from .team import STATUSES, NotFound
+from .team import IDLE, STATUSES, NotFound
 
 LOOK = {"readOnlyHint": True}
 WRITE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
@@ -106,8 +106,9 @@ def joined_text(r: dict, req: dict, leave: bool = False) -> str:
     if "channel" in r:
         return chan(r["channel"])
     if leave:
-        return "Left %s: it wakes you again once you comment, are assigned or @mentioned." % r["issue"]["id"]
-    return "Following %s: its comments and changes wake you." % r["issue"]["id"]
+        return "Left %s: its comments come to you again once you comment, are assigned or @mentioned." % \
+            r["issue"]["id"]
+    return "Following %s: its comments come to you." % r["issue"]["id"]
 
 
 def issue_text(r: dict, req: dict) -> str:
@@ -117,12 +118,39 @@ def issue_text(r: dict, req: dict) -> str:
                       *body, *map(line, r["messages"])])
 
 
-def sleep_text(r: dict, req: dict) -> str:
-    """The wake, which is the agent's next prompt: each message cut at 300 characters, which bounds it."""
-    if not r["woke"]:
-        return "Nothing woke you."
-    more = ["and %d more: swarmory read" % r["more"]] if r["more"] else []
-    return "\n".join(["You were woken by:", *(line(m, 300) for m in r["reasons"]), *more, left(r["deadline"])])
+MESSAGE_MOST = 2000  # characters of a message a turn or a delivery shows; `swarmory read` has all of it
+
+
+def inbox_text(r: dict, req: dict) -> str:
+    """Messages delivered between an agent's tool calls: data from teammates, framed as such."""
+    if not r["messages"]:
+        return ""
+    return "\n".join(["[swarmory] New messages addressed to you:", *(line(m, MESSAGE_MOST) for m in r["messages"])])
+
+
+def news_text(r: dict, req: dict) -> str:
+    """What changed since an agent's last turn: its next turn's prompt. Facts only."""
+    if not r["done"]:
+        return ""
+    parts = []
+    if r["messages"]:
+        parts += ["Messages for you:", *("  " + line(m, MESSAGE_MOST) for m in r["messages"])]
+        parts += ["  and %d more: swarmory read" % r["more"]] if r["more"] else []
+    if r["channels"]:
+        parts.append("Unread in channels: %s (swarmory read CHANNEL)"
+                     % ", ".join("#%s %d" % kv for kv in r["channels"].items()))
+    if r["commits"]:
+        parts += ["New on main:", *("  " + c for c in r["commits"])]
+        parts += ["  and %d more: git log" % r["commits_more"]] if r["commits_more"] else []
+    return "\n".join(["Since your last turn:" if parts else "Nothing new since your last turn.", *parts,
+                      left(r["deadline"])])
+
+
+def wait_text(r: dict, req: dict) -> str:
+    if r["done"]:
+        return news_text(r, req)
+    return "Waiting. When you end your turn, the next starts when a message for you arrives, or at %s." % \
+        time.strftime("%H:%M %Z", time.localtime(r["idle"]))
 
 
 def tokens_in(u: dict) -> int:
@@ -177,7 +205,7 @@ def job_text(r: dict, req: dict) -> str:
 
 def queued_text(r: dict, req: dict) -> str:
     j = r["job"]
-    return ("Queued %s: %s. Its result comes as a message in %s that @mentions you: end your turn and it wakes you."
+    return ("Queued %s: %s. Its result comes as a message in %s that @mentions you."
             % (j["id"], described(j), j["to"]))
 
 
@@ -218,9 +246,6 @@ def status_text(r: dict, req: dict) -> str:
     out.append(f"model calls cost {money(spent)} at list prices"
                + (f", of a {money(r['budget'])} budget" if r.get("budget") is not None else "")
                + (f", and {unpriced} calls have no price ({models})" if unpriced else ""))
-    every = r.get("wake_every")
-    out.append(f"periodic wake: {every:g} s after an agent's last session, if nothing woke it sooner" if every else
-               "no periodic wake: an agent sleeps until something wakes it")
     return "\n".join(out)
 
 
@@ -232,7 +257,7 @@ def team(method: str) -> Callable:
 
 
 def clock(run, out: dict) -> dict:
-    """An answer with the run and its deadline, which `swarmory` and a wake tell the time left from."""
+    """An answer with the run and its deadline, which `swarmory` and a turn tell the time left from."""
     return {**out, "run": run.id, "deadline": run.config["deadline"]}
 
 
@@ -244,6 +269,23 @@ def jobs(method: str) -> Callable:
             job["used"] = used.get(job["id"])
         return out
     return call
+
+
+def commits(repo, since, main, name: str) -> tuple:
+    """(lines "sha author: subject" of main's new commits by others since `since`, newest first, at most 10; how
+    many more)."""
+    if not main or main == since:
+        return [], 0
+    out = git(repo, "log", "-50", "--format=%h %an: %s", f"{since}..{main}" if since else main, check=False) or b""
+    lines = [x for x in out.decode(errors="replace").splitlines() if not x.split(" ", 1)[-1].startswith(name + ":")]
+    return lines[:10], len(lines) - len(lines[:10])
+
+
+def news(out: dict, run, who) -> dict:
+    if out["done"]:
+        out["commits"], out["commits_more"] = commits(run.repo, out["since"], out["main"],
+                                                      run.team.members[who.member]["name"])
+    return clock(run, out)
 
 
 def find(server, req: dict):
@@ -296,9 +338,7 @@ VERBS = {v.name: v for v in [
                    "secrets"),
              Param("allow", "array", "on Modal, hosts agents may reach too"),
              Param("jobs", "boolean", "members may ask for Harbor jobs"),
-             Param("subscription", "boolean", "call models with the server's subscription logins, not API keys"),
-             Param("wake_every", "number", f"seconds a sleeping agent no one wakes sleeps before it wakes to find work "
-                   f"({WAKE_EVERY}); 0 never, else 60 to 86400")),
+             Param("subscription", "boolean", "call models with the server's subscription logins, not API keys")),
          WRITE),
     Verb("runs", "server", "server", "Every run, newest first, with its state: running, ended or stopped.", listing,
          runs_text),
@@ -315,7 +355,7 @@ VERBS = {v.name: v for v in [
          "read. With all: the latest messages there, read or not, marking nothing.", team("read"), read_text, (
              Param("conv", "string", CONV), Param("all", "boolean", "read or not, marking nothing"),
              LIMIT(1000, 100)), WRITE),
-    Verb("send", "run", "team", "Posts in a channel, DMs a member, or comments on an issue. It wakes the DM's other "
+    Verb("send", "run", "team", "Posts in a channel, DMs a member, or comments on an issue. It reaches the DM's other "
          "member, whoever it @mentions (@all, @channel), the author it replies to, and an issue's followers.",
          team("send"), lambda r, req: "Sent %s to %s." % (r["message"]["id"], r["message"]["conv"]), (
              Param("to", "string", CONV, True),
@@ -327,10 +367,10 @@ VERBS = {v.name: v for v in [
          lambda r, req: chan(r["channel"]),
          (Param("name", "string", "a-z, 0-9 and -, up to 40", True), Param("about", "string", "what it is for")),
          WRITE),
-    Verb("join", "run", "team", "Joins a channel, or follows an issue so its comments and changes wake you.",
+    Verb("join", "run", "team", "Joins a channel, or follows an issue so its comments come to you.",
          team("join"), joined_text, (Param("name", "string", "a channel or an issue id", True),), SAME),
-    Verb("leave", "run", "team", "Leaves a channel, or stops an issue's wakes until you comment, are assigned or are "
-         "@mentioned there.", team("leave"), lambda r, req: joined_text(r, req, leave=True),
+    Verb("leave", "run", "team", "Leaves a channel, or stops an issue's comments reaching you until you comment, "
+         "are assigned or are @mentioned there.", team("leave"), lambda r, req: joined_text(r, req, leave=True),
          (Param("name", "string", "a channel or an issue id", True),), SAME),
     Verb("issues", "run", "team", "The board, newest first: open issues (todo and doing), or those with status.",
          team("issues"), lambda r, req: "\n".join(map(issue_line, r["issues"])) or "No issues.", (
@@ -350,10 +390,18 @@ VERBS = {v.name: v for v in [
          lambda r, req: issue_line(r["issue"]), (
              Param("id", "string", "the issue", True), Param("status", "string", "its new status", True, STATUSES),
              Param("note", "string", "why")), WRITE),
-    Verb("sleep", "run", "team", "Sleeps until someone DMs, @mentions or replies to you, or an issue you follow gets a "
-         "comment or a change, up to timeout seconds. Returns the messages that woke you.",
-         lambda run, who, req, gone: clock(run, run.team.sleep(who.member, req, gone)), sleep_text,
-         (Param("timeout", "number", "seconds, at most 300 (300)"),), WRITE),
+    Verb("wait", "run", "team", "Says you have nothing to do until someone writes to you: an agent's next turn then "
+         f"starts on a message for it, or after {IDLE // 60} minutes. With timeout, holds this call that long for a "
+         "message, and returns what changed if one came.",
+         lambda run, who, req, gone: news(run.team.wait(who.member, req, gone, run.head), run, who), wait_text,
+         (Param("timeout", "number", "seconds to hold this call for a message, at most 300 (0)"),), WRITE),
+    Verb("next", "run", "team", "An agent's worker calls this between turns: it returns what changed since the last "
+         "turn, at once, or once the agent stops waiting.",
+         lambda run, who, req, gone: news(run.team.next(who.member, req, gone, run.head), run, who), news_text,
+         (Param("timeout", "number", "seconds to hold this call, at most 300 (300); call again to go on"),), WRITE),
+    Verb("inbox", "run", "team", "Messages addressed to you that no turn has shown yet, marked read: what a hook "
+         "delivers between an agent's tool calls.", team("inbox"), inbox_text,
+         (Param("limit", "integer", "at most this many, 1 to 10 (8)"),), WRITE),
     Verb("spend", "run", "team", "What the run's model calls have cost, by member, and the run's budget.",
          lambda run, who, req, gone: {"run": run.id, "budget": run.config.get("budget"), "by": run.proxy.totals()},
          spend_text),

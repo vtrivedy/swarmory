@@ -6,7 +6,7 @@ the prompt the session got, and {"type": "swarmory", "event": "end", ...} with i
 events() turns one session file into a list of events of one shape for every harness, each a dict with a `kind`. The
 harness's file in swarmory/harness/ parses its own lines into them:
 
-    start    the session began: prompt (what it was told, including the messages that woke it), resumed, harness, model
+    start    the session began: prompt (what it was told, including the messages for it), resumed, harness, model
     init     the harness started: model, tools, MCP servers
     think    reasoning: text (empty when the provider withholds it), tokens (an estimate, when the harness gives one)
     say      text the agent wrote

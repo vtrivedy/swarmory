@@ -3,7 +3,7 @@ import base64
 import json
 from pathlib import Path
 
-from .base import Endpoint, Login, cut, other, records, short, text_of
+from .base import INBOX, Endpoint, Login, cut, other, records, short, text_of
 
 
 class Codex:
@@ -21,16 +21,20 @@ class Codex:
         return {"SWARMORY_TOKEN": llm.token}  # the variable prepare's config names as the key
 
     def prepare(self, work: str, llm: Endpoint) -> None:
-        """Points it at the gateway: it takes a base URL only from its config file."""
+        """Points it at the gateway, which it takes only from its config file, and adds the hook that delivers
+        messages between tool calls."""
         config = Path.home() / self.home / "config.toml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text('model_provider = "swarmory"\n[model_providers.swarmory]\nname = "swarmory"\n'
                           f'base_url = "{llm.url}/openai/v1"\nenv_key = "SWARMORY_TOKEN"\nwire_api = "responses"\n'
                           "supports_websockets = false\n")
+        (config.parent / "hooks.json").write_text(json.dumps({"hooks": INBOX}) + "\n")
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "exec", *(["resume", "--last"] if resume else []), "--json", "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox", *(["-m", model] if model else []), *args, prompt]
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--dangerously-bypass-hook-trust",  # the hook is ours: it runs without Codex's interactive review
+                *(["-m", model] if model else []), *args, prompt]
 
     def once(self, prompt: str, model: str | None, folder: str) -> list:
         return [self.cli, "exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",

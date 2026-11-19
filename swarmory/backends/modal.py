@@ -151,7 +151,7 @@ PASSED = {k: os.environ[k] for k in (AGENT_IMAGE, JOB_IMAGE) if os.environ.get(k
               secrets=[modal.Secret.from_name(SERVER_SECRET), modal.Secret.from_dict(PASSED)],
               min_containers=1, max_containers=1,  # one server: two would write one data directory
               timeout=24 * 3600, **SERVER_SIZE)
-@modal.concurrent(max_inputs=1000)  # each held `swarmory sleep` is a request
+@modal.concurrent(max_inputs=1000)  # each held `swarmory wait` is a request
 @modal.web_server(PORT, startup_timeout=120)
 def server():
     """Runs `swarmory serve` on the data Volume. The container ends when the server does, so Modal starts another."""

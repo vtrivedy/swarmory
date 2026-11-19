@@ -21,7 +21,7 @@ import threading
 import time
 from pathlib import Path
 
-from swarmory import WAKE_EVERY, harness
+from swarmory import harness
 
 from . import traces
 from .jobs import Jobs, git, limits
@@ -142,7 +142,7 @@ class Run:
                 "used": by.get(m["id"])})
         return {"run": self.id, "mission": self.config["mission"], "state": state_, "deadline": self.config["deadline"],
                 "minutes_left": max(0, int(self.config["deadline"] - now) // 60), "budget": self.config.get("budget"),
-                "wake_every": self.config.get("wake_every", 0), "members": members}
+                "members": members}
 
     # ---- the repo, and what the viewer reads
 
@@ -305,15 +305,11 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
     mission, (hours, budget) = req.get("mission"), limits(req)
     team, grants, allow = req.get("team"), req.get("grant") or [], req.get("allow") or []
     me, jobs, subscription = req.get("me") or "operator", req.get("jobs") or False, bool(req.get("subscription"))
-    every = WAKE_EVERY if req.get("wake_every") is None else req["wake_every"]
     if not isinstance(mission, str) or not 0 < len(mission) <= 100:
         raise ValueError("mission is the mission's name, 1 to 100 characters")
     if not all(isinstance(x, list) and all(isinstance(s, str) for s in x) for x in (grants, allow)) \
             or not isinstance(me, str) or not isinstance(jobs, bool):
         raise ValueError("grant and allow are lists of names, me a name and jobs true or false")
-    if isinstance(every, bool) or not isinstance(every, (int, float)) or not (every == 0 or 60 <= every <= 86400):
-        raise ValueError("wake_every is 0 (no periodic wake) or seconds from 60 to 86400")
-    every = int(every) if every == int(every) else every
     if not isinstance(team, list) or not team:
         raise ValueError("A team is a list of at least one agent.")
     for n, m in enumerate(team, 1):
@@ -360,8 +356,7 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
     members.append({"id": op, "name": op.title(), "kind": "human", "operator": True})
     return {"run": rid, "mission": mission, "created": now, "deadline": int(now + hours * 3600), "members": members,
             "operator": op, "view_sha256": sha(view), "channels": [{"id": "general", "about": "The whole team."}],
-            "budget": budget, "jobs": jobs, "grants": grants, "allow": allow, "subscription": subscription,
-            "wake_every": every}, view
+            "budget": budget, "jobs": jobs, "grants": grants, "allow": allow, "subscription": subscription}, view
 
 
 class Runs:
