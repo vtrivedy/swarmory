@@ -1,5 +1,6 @@
 """swarmory/control_plane/proxy.py against a stand-in upstream and a stand-in LiteLLM (fake_litellm.py, beside a small
-price table): answered model calls are recorded and priced from the table, budgets stop calls, a ledger line a crash
+price table and a live one): answered model calls are recorded and priced from the live table, or the other when it
+can't be read, budgets stop calls, a ledger line a crash
 cut short costs no call, and a model named for another provider goes to LiteLLM with only its route's fields."""
 import json
 import shutil
@@ -15,6 +16,7 @@ from conftest import soon
 from swarmory.control_plane.litellm import LiteLLM
 from swarmory.control_plane.proxy import Proxy, add
 from swarmory.control_plane.team import replay
+from swarmory.control_plane.verbs import spend_text
 
 ANTHROPIC = [{"type": "message_start", "message": {"model": "claude-opus-5-5", "usage": {
     "input_tokens": 10, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200, "output_tokens": 1,
@@ -30,15 +32,19 @@ PRICES = {  # as LiteLLM's price table, with made-up prices a thousand times the
     "claude-sonnet-5-5": {"litellm_provider": "anthropic"},
     "gpt-6.1-sol": {"litellm_provider": "openai", "input_cost_per_token": 2e-3, "output_cost_per_token": 1e-2},
     "sample_spec": {}}
+LIVE = {**PRICES, "gpt-6.1-terra": {"litellm_provider": "openai", "input_cost_per_token": 1e-3,  # only the live table
+                                    "output_cost_per_token": 5e-3, "cache_read_input_token_cost": 5e-5}}
 
 
 class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        asked = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}").get("model")
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
         for e in ANTHROPIC if self.path.endswith("messages") else RESPONSES:
+            if e["type"] == "message_start" and asked:  # answered by the model asked for
+                e = {**e, "message": {**e["message"], "model": asked}}
             self.wfile.write(f"data: {json.dumps(e)}\n\n".encode())
 
 
@@ -61,8 +67,10 @@ def call(tmp_path):
     table = venv / "lib" / "python3.12" / "site-packages" / "litellm" / "model_prices_and_context_window_backup.json"
     table.parent.mkdir(parents=True)
     table.write_text(json.dumps(PRICES))
-    env = {"SWARMORY_PROXY_ANTHROPIC": url, "SWARMORY_PROXY_OPENAI": url + "/base", "ANTHROPIC_API_KEY": "real-a",
-           "OPENAI_API_KEY": "real-o", "SWARMORY_PROXY_LITELLM": str(venv / "bin" / "litellm")}
+    (tmp_path / "live.json").write_text(json.dumps(LIVE))
+    env = {"SWARMORY_PROXY_PRICES": (tmp_path / "live.json").as_uri(), "SWARMORY_PROXY_ANTHROPIC": url,
+           "SWARMORY_PROXY_OPENAI": url + "/base", "ANTHROPIC_API_KEY": "real-a", "OPENAI_API_KEY": "real-o",
+           "SWARMORY_PROXY_LITELLM": str(venv / "bin" / "litellm")}
     front.proxy, front.handled = None, 0
     [threading.Thread(target=s.serve_forever, daemon=True).start() for s in (up, front)]
 
@@ -125,6 +133,7 @@ def test_calls_are_priced_and_budgets_stop_the_run_and_the_job(call):
     assert call("/anthropic/v1/messages", {"model": "gpt-9-unpriced"})[0] == 200, "with no budget, unpriced calls go"
     assert call.rows()[-1]["usd"] is None
     assert call.proxy.totals()["ada"]["unpriced"] == 1, "an unpriced call counted as a free one"
+    assert "and 1 with no price (gpt-9-unpriced)" in spend_text({"budget": None, "by": call.proxy.totals()}, {})
     assert not (call.ledger.parent / "seen.jsonl").exists(), "pricing started LiteLLM, which only translating needs"
 
 
@@ -178,3 +187,21 @@ def test_a_model_named_for_another_provider_goes_to_litellm_with_only_its_routes
     call.restart(subscription=True, CLAUDE_CODE_OAUTH_TOKEN="oauth-c")
     assert call("/anthropic/v1/messages", {"model": "openai/gpt-6.1-sol"})[0] == 200
     assert "via" not in call.rows()[-1] and len(call.seen()) == seen, "a subscription run's call went to LiteLLM"
+
+
+def test_a_model_only_the_live_table_lists_is_priced_and_without_it_the_table_that_came_with_litellm_prices(call):
+    call.restart()
+    job = {"x-job": "j1", "x-budget": "100"}
+    assert call("/openai/v1/responses", {"model": "gpt-6.1-terra"}, **job)[0] == 200, "a budgeted job's call refused"
+    assert call.rows()[-1]["usd"] == pytest.approx(1000 * 1e-3 + 4000 * 5e-5 + 300 * 5e-3)  # $2.70: in, read, out
+
+    call.restart(budget=100, SWARMORY_PROXY_PRICES=(call.ledger.parent / "gone.json").as_uri())
+    status, body = call("/openai/v1/responses", {"model": "gpt-6.1-terra"})
+    assert status == 400 and "no price for model 'gpt-6.1-terra'" in body["error"]["message"]
+    assert call("/anthropic/v1/messages", {"model": "claude-opus-5-5"})[0] == 200
+    assert call.rows()[-1]["usd"] == pytest.approx(2.69), "the table that came with LiteLLM didn't price the call"
+
+    call.restart()
+    call.proxy.litellm.load((call.ledger.parent / "gone.json").as_uri())  # a later read fails: prices stay
+    assert call("/openai/v1/responses", {"model": "gpt-6.1-terra"}, **job)[0] == 200
+    assert call.rows()[-1]["usd"] == pytest.approx(2.7)

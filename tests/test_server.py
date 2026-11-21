@@ -106,6 +106,7 @@ def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
     monkeypatch.setenv("SWARMORY_PROXY_LITELLM", str(FAKE_LITELLM))
+    monkeypatch.setenv("SWARMORY_PROXY_PRICES", (tmp_path / "no-prices.json").as_uri())  # no network in tests
     monkeypatch.setenv("HARBOR", f"{sys.executable} {tmp_path / 'harbor.py'}")
     port = free_port()
     url, token = f"http://127.0.0.1:{port}", "c0ffee" * 5 + "00"

@@ -1,16 +1,18 @@
-"""The server's LiteLLM, which every run's gateway (proxy.py) shares, in two parts. Its price table, a JSON file that
-comes with the litellm executable, is read here once: every model call the server makes is priced from it in this
-process, by LiteLLM's rules, and it names each model's provider. LiteLLM the process, the server's child on 127.0.0.1,
-serves only the calls that need translating: those to a model of another provider than the route's, such as
-openai/gpt-6.1-sol or xai/grok-4.3 on the anthropic route (a coding agent inside a job's trial can drop the provider
-from the name, so a model's provider is its prefix or, without one, the provider the price table lists for it). It
-starts on the first such call. Native calls and subscription logins never reach it.
+"""The server's LiteLLM, which every run's gateway (proxy.py) shares, in two parts. Its price table is read here when
+the server starts and again every hour: LiteLLM's live table, which lists new models first, or, when that can't be
+fetched, the table the server last read, else the one that comes with the litellm executable. Every model call the
+server makes is priced from it in this process, by LiteLLM's rules, and it names each model's provider. LiteLLM the
+process, the server's child on 127.0.0.1, serves only the calls that need translating: those to a model of another
+provider than the route's, such as openai/gpt-6.1-sol or xai/grok-4.3 on the anthropic route (a coding agent inside a
+job's trial can drop the provider from the name, so a model's provider is its prefix or, without one, the provider the
+price table lists for it). It starts on the first such call. Native calls and subscription logins never reach it.
 
 It runs SWARMORY_PROXY_LITELLM (the litellm executable from litellm.txt, pinned by hash), with no database and no
 callbacks. Its environment holds the providers' API keys and base URLs and nothing else, so it never sees a login or a
 run token.
 
     SWARMORY_PROXY_LITELLM         the litellm executable; unset, calls are neither priced nor translated
+    SWARMORY_PROXY_PRICES          where the live price table is   (default LiteLLM's on GitHub)
     SWARMORY_PROXY_ANTHROPIC       where calls to Anthropic's API go  (default https://api.anthropic.com)
     SWARMORY_PROXY_OPENAI          where calls to OpenAI's API go     (default https://api.openai.com)
     SWARMORY_PROXY_<PROVIDER>      LiteLLM's api_base for another provider, as LiteLLM takes it (default: its own)
@@ -36,6 +38,8 @@ from pathlib import Path
 PROVIDERS = {"anthropic": "https://api.anthropic.com", "openai": "https://api.openai.com",
              "gemini": "https://generativelanguage.googleapis.com/v1beta"}  # providers a plain model name may be of
 STARTUP = 120  # seconds LiteLLM may take to answer after it starts
+PRICES = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+REFRESH = 3600  # seconds between reads of the live price table
 TIER = re.compile(r"^input_cost_per_token_above_(\d+)k_tokens$")  # a price entry's long-context tiers
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -75,25 +79,44 @@ class LiteLLM:
         self.exe, self.dir = env.get("SWARMORY_PROXY_LITELLM"), Path(data)
         self.master, self.url, self.proc, self.retry = "sk-" + secrets.token_hex(24), None, None, 0.0
         self.lock = threading.Lock()
-        self.table = {}  # model: its prices and provider, from the price table that comes with the litellm executable
-        table = self.exe and next(Path(self.exe).resolve().parent.parent.glob(
+        self.table, self.known, self.done = {}, set(PROVIDERS), threading.Event()
+        self.pinned = self.exe and next(Path(self.exe).resolve().parent.parent.glob(
             "lib/python*/site-packages/litellm/model_prices_and_context_window_backup.json"), None)
-        if table:
-            self.table = {m: e for m, e in json.loads(table.read_text()).items() if isinstance(e, dict)}
-        elif self.exe:
-            print(f"swarmory: no price table beside {self.exe}, so no model call is priced", file=sys.stderr,
-                  flush=True)
-        # the prefix of every priced model named `provider/model`, when the row says that is its provider: the names
-        # LiteLLM serves by prefix, without the table's other labels and its services that have no token price
-        self.known = set(PROVIDERS) | {m.partition("/")[0] for m, e in self.table.items()
-                                       if e.get("input_cost_per_token") is not None
-                                       and m.partition("/")[0] == e.get("litellm_provider") and m.isascii()
-                                       and m.partition("/")[0].isidentifier()}
+        if self.exe:
+            url = env.get("SWARMORY_PROXY_PRICES") or PRICES
+            self.load(url)
+            threading.Thread(target=self.refresh, args=(url,), daemon=True).start()
         # provider: (upstream, key), for each of them whose API key the server holds
         self.keys = {p: (upstream(env, p), env[f"{p.upper()}_API_KEY"]) for p in sorted(self.known)
                      if env.get(f"{p.upper()}_API_KEY")}
         if self.exe:
             self.end_last()  # now, not at the first translated call: it holds the providers' keys
+
+    def load(self, url: str):
+        """Reads the price table from `url`; when that fails, keeps the table it has, or with none yet reads the one
+        that comes with the litellm executable. A model none of them lists has no price."""
+        try:
+            with OPENER.open(url, timeout=30) as r:
+                table = json.loads(r.read())
+            if not isinstance(table, dict):
+                raise ValueError("not a price table")
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            if self.table:
+                return print(f"swarmory: could not read prices from {url} ({e}), so they stay as they were",
+                             file=sys.stderr, flush=True)
+            print(f"swarmory: could not read prices from {url} ({e}), so they come from "
+                  f"{self.pinned or 'nowhere: no model call is priced'}", file=sys.stderr, flush=True)
+            table = json.loads(self.pinned.read_text()) if self.pinned else {}
+        table = {m: e for m, e in table.items() if isinstance(e, dict)}  # model: its prices and provider
+        # the prefix of every priced model named `provider/model`, when the row says that is its provider: the names
+        # LiteLLM serves by prefix, without the table's other labels and its services that have no token price
+        self.table, self.known = table, set(PROVIDERS) | {
+            m.partition("/")[0] for m, e in table.items() if e.get("input_cost_per_token") is not None
+            and m.partition("/")[0] == e.get("litellm_provider") and m.isascii() and m.partition("/")[0].isidentifier()}
+
+    def refresh(self, url: str):
+        while not self.done.wait(REFRESH):
+            self.load(url)
 
     def ensure(self) -> bool:
         """Starts LiteLLM if it isn't running, and waits until it answers. False if it can't."""
@@ -159,7 +182,9 @@ class LiteLLM:
             os.kill(pid, signal.SIGKILL)
 
     def stop(self):
-        """Ends LiteLLM, which holds the providers' keys: asked first, and killed if a call still holds it open."""
+        """Ends LiteLLM, which holds the providers' keys: asked first, and killed if a call still holds it open. Ends
+        the reads of the price table too."""
+        self.done.set()
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:

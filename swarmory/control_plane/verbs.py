@@ -132,7 +132,9 @@ def tokens_in(u: dict) -> int:
 def used_line(u: dict) -> str:
     return "%d, tokens in %s, out %s, %s%s" % (u["calls"], format(tokens_in(u), ","), format(u["output"], ","),
                                                money(u.get("usd") or 0),
-                                               " and %d with no price" % u["unpriced"] if u.get("unpriced") else "")
+                                               " and %d with no price (%s)" % (
+                                                   u["unpriced"], ", ".join(u["unpriced_models"]))
+                                               if u.get("unpriced") else "")
 
 
 def spend_text(r: dict, req: dict) -> str:
@@ -212,9 +214,10 @@ def status_text(r: dict, req: dict) -> str:
         out.append(f"{m['id']:10}{m['harness']:13}{m['model']:28} {blank['worker']:17}{blank['starts']:>7}"
                    f"{blank['sessions']:>9}{use}".rstrip())
     spent, unpriced = (sum(u.get(k) or 0 for u in used) for k in ("usd", "unpriced"))
+    models = ", ".join(sorted({m for u in used for m in u.get("unpriced_models", ())}))
     out.append(f"model calls cost {money(spent)} at list prices"
                + (f", of a {money(r['budget'])} budget" if r.get("budget") is not None else "")
-               + (f", and {unpriced} calls have no price" if unpriced else ""))
+               + (f", and {unpriced} calls have no price ({models})" if unpriced else ""))
     every = r.get("wake_every")
     out.append(f"periodic wake: {every:g} s after an agent's last session, if nothing woke it sooner" if every else
                "no periodic wake: an agent sleeps until something wakes it")
