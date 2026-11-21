@@ -46,7 +46,8 @@ HOP = {"host", "content-length", "connection", "transfer-encoding", "accept-enco
 
 def add(by: dict, row: dict, key: str = "who"):
     """One ledger row into calls, tokens and dollars by member, or with key "job" by job; a row without one counts
-    for none. A call with no price adds no dollars and counts as unpriced, so a total never passes it off as free."""
+    for none. A call with no price adds no dollars and counts as unpriced, its model named, so a total never passes it
+    off as free."""
     if row.get(key) is None:
         return
     s = by.setdefault(row[key], {**dict.fromkeys(("calls", *USED, "unpriced"), 0), "usd": 0.0})
@@ -54,7 +55,9 @@ def add(by: dict, row: dict, key: str = "who"):
     for k in USED:
         s[k] += row[k]
     s["usd"] += row.get("usd") or 0
-    s["unpriced"] += row.get("usd") is None
+    if row.get("usd") is None:
+        s["unpriced"] += 1
+        s["unpriced_models"] = sorted({*s.get("unpriced_models", ()), row.get("model") or "unnamed"})
 
 
 def refuse(handler, provider: str, status: int, message: str):
@@ -222,8 +225,8 @@ class Proxy:
         owner, entry = self.litellm.find(asked)
         if model_call and budgeted and entry is None:
             return refuse(h, provider, 400,
-                          f"The run has a budget, and the server has no price for model {asked!r}, so "
-                          "it can't count the call. Use a model LiteLLM's price table lists.")
+                          f"The run has a budget, and the server has no price for model {asked!r}, so it can't "
+                          "count the call: neither LiteLLM's live price table nor the one it came with lists it.")
         if owner and owner != provider and not self.subscription and owner not in self.litellm.keys:
             return refuse(h, provider, 503, f"The server holds no {owner} key, which {asked} needs: start the "
                           f"server with {owner.upper()}_API_KEY set.")

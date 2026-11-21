@@ -10,6 +10,9 @@ dependencies = []
 [project.optional-dependencies]
 modal = ["modal==1.6.3"]
 
+[dependency-groups]
+dev = ["pytest"]  # `uv run pytest`
+
 [project.scripts]
 swarmory = "swarmory.cli:main"
 
@@ -22,3 +25,4 @@ packages = ["swarmory", "swarmory_harbor"]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "tests", "swarmory_harbor/skills/eval-factory/scripts"]
+testpaths = ["tests"]
