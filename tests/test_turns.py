@@ -155,6 +155,7 @@ def test_every_harness_with_a_hook_gets_messages_mid_turn_in_its_own_answer(tmp_
         assert hook["command"] == "swarmory inbox --hook", f
     assert '"swarmory", ["inbox", "--hook"]' in (tmp_path / ".pi/agent/extensions/swarmory.ts").read_text()
     assert "--dangerously-bypass-hook-trust" in Codex().command("go", True, None, [])  # Codex runs it unreviewed
+    assert "--disallowedTools" in ClaudeCode().command("go", True, None, [])
     monkeypatch.setattr(cli, "LOGIN", str(tmp_path / ".swarmory" / "login"))
     (tmp_path / ".swarmory").mkdir()
     asked = []

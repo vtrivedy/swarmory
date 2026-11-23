@@ -40,7 +40,10 @@ class ClaudeCode:
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "-p", *(["--continue"] if resume else []), prompt, "--output-format", "stream-json",
-                "--verbose", "--dangerously-skip-permissions", *(["--model", model] if model else []), *args]
+                "--verbose", "--dangerously-skip-permissions",
+                # internal wakeup/cron tools keep `claude -p` sleeping instead of returning to `swarmory wait`
+                "--disallowedTools", "ScheduleWakeup,CronCreate,CronDelete,CronList",
+                *(["--model", model] if model else []), *args]
 
     def once(self, prompt: str, model: str | None, folder: str) -> list:
         real, mine = Path(os.path.realpath(folder)), str(Path.home() / self.home) + os.sep  # the person's own stay
