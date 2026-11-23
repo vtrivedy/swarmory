@@ -16,12 +16,13 @@ class Codex:
     home = ".codex"
     conversations = "sessions"
     hooks = True
+    takes_args = True
     sandboxed = {}
 
     def env(self, llm: Endpoint) -> dict:
         return {"SWARMORY_TOKEN": llm.token}  # the variable prepare's config names as the key
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         """Points it at the gateway, which it takes only from its config file, and adds the hook that delivers
         messages between tool calls."""
         config = Path.home() / self.home / "config.toml"

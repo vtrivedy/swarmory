@@ -37,8 +37,22 @@ LIVE = {**PRICES, "gpt-6.1-terra": {"litellm_provider": "openai", "input_cost_pe
 
 
 class Upstream(BaseHTTPRequestHandler):
+    gate = None  # optional (entered Event, release Event) to hold a response mid-flight
+
     def do_POST(self):
-        asked = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}").get("model")
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        asked = body.get("model")
+        if body.get("drop_mid_stream"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", "10000")  # closes early -> IncompleteRead without usage
+            self.end_headers()
+            self.wfile.write(b'data: {"type":"response.created","response":{"usage":null}}\n\n')
+            self.wfile.flush()
+            return
+        if self.gate and body.get("hold"):
+            self.gate[0].set()
+            self.gate[1].wait(10)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -205,3 +219,38 @@ def test_a_model_only_the_live_table_lists_is_priced_and_without_it_the_table_th
     call.proxy.litellm.load((call.ledger.parent / "gone.json").as_uri())  # a later read fails: prices stay
     assert call("/openai/v1/responses", {"model": "gpt-6.1-terra"}, **job)[0] == 200
     assert call.rows()[-1]["usd"] == pytest.approx(2.7)
+
+
+def test_in_flight_budget_reservation_blocks_concurrent_overshoot_and_dropped_streams_are_marked_incomplete(call):
+    call.restart(budget=4)
+    # First call spends $2.69, establishing mean call cost = $2.69
+    assert call("/anthropic/v1/messages", {"model": "claude-opus-5-5", "stream": True})[0] == 200
+    entered, release = threading.Event(), threading.Event()
+    Upstream.gate = (entered, release)
+    first = {}
+    try:
+        t = threading.Thread(target=lambda: first.update(
+            res=call("/anthropic/v1/messages", {"model": "claude-opus-5-5", "hold": True})))
+        t.start()
+        assert entered.wait(5)
+        # While call 2 ($2.69 estimated) is in flight ($2.69 + $2.69 >= $4), call 3 must be refused
+        status, body = call("/anthropic/v1/messages", {"model": "claude-opus-5-5"}, who="ed")
+        assert status == 429 and "in flight" in body["error"]["message"]
+        release.set()
+        t.join()
+        assert first["res"][0] == 200
+    finally:
+        Upstream.gate = None
+        release.set()
+
+    # A priced model whose HTTP 200 stream drops before usage arrives is marked incomplete, not unpriced
+    call.ledger.unlink()
+    call.restart()
+    try:
+        call("/openai/v1/responses", {"model": "gpt-6.1-sol", "drop_mid_stream": True})
+    except Exception:
+        pass
+    assert soon(lambda: call.ledger.is_file() and len(call.rows()) == 1)
+    row = call.rows()[-1]
+    assert row["incomplete"] is True and row["usd"] == 0.0
+    assert call.proxy.totals()["ada"]["unpriced"] == 0

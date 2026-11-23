@@ -49,11 +49,12 @@ class Harness(Protocol):
                                # None: it resumes after a session that ended with status 0 since its last fresh start
     sandboxed: dict[str, str]  # its environment in a sandbox that is itself the boundary
     hooks: bool  # it runs `swarmory inbox --hook` mid-turn, so messages reach the agent then
+    takes_args: bool  # it accepts extra CLI args from team.toml
 
     def env(self, llm: Endpoint) -> dict[str, str]:
         """The environment of a session whose model calls go to `llm`."""
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         """Writes the config files a session in the folder `work` needs: the gateway, and the hook that delivers
         messages between tool calls, when the harness has one. Called before each session."""
 

@@ -23,13 +23,14 @@ class DeepAgents:
     home = ".deepagents"
     conversations = "conversations"
     hooks = True  # deepagents_session.py runs `swarmory inbox --hook` before each model call
+    takes_args = False
     # a Modal sandbox can't reach PyPI, where uv revalidates a stale cache: the image's cache has the SDK
     sandboxed = {"UV_CACHE_DIR": CACHE, "UV_OFFLINE": "1"}
 
     def env(self, llm: Endpoint) -> dict:
         return gateway(llm)
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         pass
 
     def inbox(self, text: str) -> dict:

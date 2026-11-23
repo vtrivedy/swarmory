@@ -16,13 +16,14 @@ class Antigravity:
     home = ".gemini"
     conversations = "antigravity-cli/conversations"
     hooks = True
+    takes_args = True
     sandboxed = {}
 
     def env(self, llm: Endpoint) -> dict:
         return {"GOOGLE_GEMINI_BASE_URL": f"{llm.url}/gemini", "GEMINI_API_KEY": llm.token,
                 "AGY_CLI_DISABLE_AUTO_UPDATE": "1"}
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         """Has it use the key, not a Google sign-in, and adds the hook that delivers messages before each model
         call."""
         home = Path.home() / self.home

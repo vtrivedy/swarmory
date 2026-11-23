@@ -14,10 +14,9 @@ import sys
 from pathlib import Path
 
 from swarmory.cli import git
-from swarmory.harness.claude_code import ClaudeCode
-from swarmory.harness.codex import Codex
+from swarmory.harness import HARNESSES
 
-REPORTERS = {h.name: h for h in (ClaudeCode(), Codex())}  # the harnesses that have once()
+REPORTERS = {h.name: h for h in HARNESSES if hasattr(h, "once")}
 
 
 def records(run: Path) -> Path:

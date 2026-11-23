@@ -3,7 +3,6 @@ openai/..., gemini/...), and it calls the gateway as that provider's API. pi rea
 so prepare writes the gateway's address to ~/.pi/agent/models.json, which names the <PROVIDER>_API_KEY variable that
 holds the run token."""
 import json
-import os
 from pathlib import Path
 
 from .base import Endpoint, Login, cut, gateway, other, records, short, text_of
@@ -36,21 +35,30 @@ class Pi:
     home = ".pi"
     conversations = "agent/sessions"
     hooks = True
+    takes_args = True
     sandboxed = {}
 
     def env(self, llm: Endpoint) -> dict:
         return gateway(llm)
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         """Points the model's provider at the gateway, with the key env() sets, and adds the extension that delivers
         messages between tool calls."""
-        provider, _, model = os.environ["SWARMORY_MODEL"].partition("/")
+        provider, _, name = (model or "").partition("/")
         api, route = API[provider]
+        spec = {"id": name}
+        meta = meta or {}
+        if ctx := meta.get("max_input_tokens") or meta.get("max_tokens"):
+            spec["contextWindow"] = int(ctx)
+        if out := meta.get("max_output_tokens") or meta.get("max_tokens"):
+            spec["maxTokens"] = int(out)
+        if "supports_reasoning" in meta:
+            spec["reasoning"] = bool(meta["supports_reasoning"])
         agent = Path.home() / self.home / "agent"
         (agent / "extensions").mkdir(parents=True, exist_ok=True)
         (agent / "models.json").write_text(json.dumps({"providers": {provider: {
             "baseUrl": f"{llm.url}/{route}", "api": api, "apiKey": f"{provider.upper()}_API_KEY",
-            "models": [{"id": model}]}}}) + "\n")
+            "models": [spec]}}}) + "\n")
         (agent / "extensions" / "swarmory.ts").write_text(EXTENSION)
 
     def inbox(self, text: str) -> dict:

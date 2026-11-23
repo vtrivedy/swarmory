@@ -17,7 +17,7 @@ moved since you pulled, run `git pull`, which rebases, and push again.
 - `swarmory channel NAME` makes a channel. The channel general has everyone.
 - Issues have a status (todo, doing, done, or canceled), assignees, and followers. `swarmory issues` lists them.
   `swarmory new`, `assign`, and `move` change them. Each change posts a line in the issue's thread.
-- `swarmory` shows what is new for you. `swarmory help` lists every command.
+- `swarmory` shows what is new for you. `swarmory spend` shows model spend and budget. `swarmory help` lists every command.
 
 ## Turns
 

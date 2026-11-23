@@ -5,6 +5,7 @@ holds or may claim) and what runs (the backend's `live`), and plan() says what t
 worker is gone, which also ends the sandboxes its Harbor left. plan() is pure; tick() carries its steps out. Starting
 an agent mints its token, so a restarted worker holds a new one and the old one stops working; starting a job's worker
 claims the job, which mints its tokens."""
+import json
 import os
 import secrets
 import string
@@ -89,10 +90,13 @@ class Supervisor:
                 traceback.print_exc()
 
     def tick(self):
+        if self.done.is_set():
+            return
+        live = self.backend.live()
         with self.lock:
             if self.done.is_set():  # the server is closing: nothing starts after close() returns
                 return
-            now, live = time.time(), self.backend.live()
+            now = time.time()
             for step in plan([w for run in self.runs.loaded() for w in run.wanted(now)], live, now, self.restart):
                 try:
                     self.do(step)
@@ -122,12 +126,16 @@ class Supervisor:
 
     def agent(self, run, member: dict, token: str) -> WorkerSpec:
         c = run.config
+        entry = run.proxy.litellm.find(member.get("model"))[1] or {}
+        meta = {k: entry[k] for k in ("max_input_tokens", "max_output_tokens", "max_tokens", "supports_reasoning")
+                if entry.get(k) is not None}
         return WorkerSpec(
             f"{run.id}/agent/{member['id']}",
             {"SWARMORY_URL": f"{self.url}/r/{run.id}", "SWARMORY_TOKEN": token, "SWARMORY_ID": member["id"],
              "SWARMORY_NAME": member["name"], "SWARMORY_HARNESS": member["harness"],
              "SWARMORY_MODEL": member.get("model") or "", "SWARMORY_DEADLINE": str(c["deadline"]),
              "SWARMORY_PROMPT": prompt(c, member), "SWARMORY_ARGS": "\n".join(member.get("args") or ()),
+             **({"SWARMORY_MODEL_META": json.dumps(meta)} if meta else {}),
              **{f"SWARMORY_{k.upper()}": member[k] for k in harness.COMMAND_FIELDS if member.get(k)}},
             tuple(c.get("grants", ())), (self.host, *c.get("allow", ())), f"runs/{run.id}/members/{member['id']}")
 

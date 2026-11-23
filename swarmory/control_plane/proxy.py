@@ -194,6 +194,7 @@ class Proxy:
                 self.logins[h.provider] = (upstream(env, h.provider, login.upstream), h, login)
         self.lock = threading.Lock()
         self.by, self.by_job = {}, {}  # a restarted server carries on from what it recorded
+        self.in_flight = {}  # call ticket -> (job_id or None, estimated usd)
         replay(self.ledger, lambda row: (add(self.by, row), add(self.by_job, row, "job")))
         self.file = open(self.ledger, "a")
 
@@ -202,18 +203,41 @@ class Proxy:
         with self.lock:
             return {k: dict(v) for k, v in (self.by_job if jobs else self.by).items()}
 
+    def _over(self, job) -> str | None:
+        run = sum(s["usd"] for s in self.by.values())
+        run_flight = sum(usd for _, usd in self.in_flight.values())
+        if self.budget is not None and run + run_flight >= self.budget:
+            extra = "" if run >= self.budget else f" (plus ~{money(run_flight)} in flight)"
+            return f"The run has spent {money(run)}{extra} of its {money(self.budget)} budget."
+        if not job:
+            return None
+        used = self.by_job.get(job["id"], {})
+        if job.get("tokens") and sum(used.get(k, 0) for k in USED) >= job["tokens"]:
+            return f"Job {job['id']} has used its {job['tokens']:,} tokens."
+        spent = used.get("usd", 0)
+        job_flight = sum(usd for jid, usd in self.in_flight.values() if jid == job["id"])
+        if job.get("budget") is not None and spent + job_flight >= job["budget"]:
+            extra = "" if spent >= job["budget"] else f" (plus ~{money(job_flight)} in flight)"
+            return f"Job {job['id']} has spent {money(spent)}{extra} of its {money(job['budget'])} budget."
+        return None
+
     def over(self, job) -> str | None:
         """Why a call now would be refused: the run or the job has spent its budget, or the job its tokens."""
         with self.lock:
-            run = sum(s["usd"] for s in self.by.values())
-            used = dict(self.by_job.get(job["id"], {})) if job else {}
-        if self.budget is not None and run >= self.budget:
-            return f"The run has spent {money(run)} of its {money(self.budget)} budget."
-        if job and job.get("tokens") and sum(used.get(k, 0) for k in USED) >= job["tokens"]:
-            return f"Job {job['id']} has used its {job['tokens']:,} tokens."
-        if job and job.get("budget") is not None and used.get("usd", 0) >= job["budget"]:
-            return f"Job {job['id']} has spent {money(used['usd'])} of its {money(job['budget'])} budget."
-        return None
+            return self._over(job)
+
+    def reserve(self, job, entry, body_len: int) -> tuple[object | None, str | None]:
+        with self.lock:
+            if why := self._over(job):
+                return None, why
+            calls = sum(s["calls"] for s in self.by.values())
+            avg = sum(s["usd"] for s in self.by.values()) / calls if calls else 0.0
+            if job and (j := self.by_job.get(job["id"])) and j["calls"]:
+                avg = j["usd"] / j["calls"]
+            est = max(avg, (body_len / 4.0) * ((entry or {}).get("input_cost_per_token") or 0.0))
+            ticket = object()
+            self.in_flight[ticket] = (job["id"] if job else None, est)
+            return ticket, None
 
     def handle(self, h, provider: str, rest: str, who, job: dict = None):
         """Forward one request on the BaseHTTPRequestHandler h, for member `who` (None: an unknown token), to
@@ -287,45 +311,66 @@ class Proxy:
                                   f"new run with a new {harness.login}: {harness.login_from}.")
                 headers, path = login.sign(headers, rest)
             up = urlsplit(base)
+        ticket = None
+        if model_call and budgeted:
+            ticket, why = self.reserve(job, entry, len(body))
+            if why:
+                return refuse(h, provider, 429, why)
         connection = http.client.HTTPConnection if up.scheme == "http" else http.client.HTTPSConnection
         conn = connection(up.hostname, up.port, timeout=900)
-        status, seen = None, bytearray()
+        status, seen, stream_err = None, bytearray(), None
         try:
-            conn.request(h.command, up.path.rstrip("/") + "/" + path, body or None, headers)
-            resp = conn.getresponse()
-            status = resp.status
-            h.send_response(status)
-            for k, v in resp.getheaders():
-                if k.lower() not in HOP and not k.lower().startswith("x-litellm"):  # its upstreams and settings
-                    h.send_header(k, v)
-            caller = relay(h.end_headers)
-            while True:
-                chunk = resp.read1(65536)
-                if not chunk:
-                    break
-                seen += chunk
-                caller = caller and relay(lambda: (h.wfile.write(chunk), h.wfile.flush()))
-        except (OSError, http.client.HTTPException) as e:
-            h.log_message("upstream %s failed: %s", provider, e)
-            if status is None:
-                return refuse(h, provider, 502, f"The server couldn't reach {provider}: {e}")
+            try:
+                conn.request(h.command, up.path.rstrip("/") + "/" + path, body or None, headers)
+                resp = conn.getresponse()
+                status = resp.status
+                h.send_response(status)
+                for k, v in resp.getheaders():
+                    if k.lower() not in HOP and not k.lower().startswith("x-litellm"):  # its upstreams and settings
+                        h.send_header(k, v)
+                caller = relay(h.end_headers)
+                while True:
+                    chunk = resp.read1(65536)
+                    if not chunk:
+                        if resp.length not in (None, 0):
+                            stream_err = http.client.IncompleteRead(bytes(seen), resp.length)
+                        break
+                    seen += chunk
+                    caller = caller and relay(lambda: (h.wfile.write(chunk), h.wfile.flush()))
+            except (OSError, http.client.HTTPException) as e:
+                stream_err = e
+                h.log_message("upstream %s failed: %s", provider, e)
+                if status is None:
+                    return refuse(h, provider, 502, f"The server couldn't reach {provider}: {e}")
+            finally:
+                conn.close()
+            if not model_call or not 200 <= status < 300:
+                return
+            body = plain(bytes(seen), resp.getheader("Content-Encoding") or "")
+            model, used = usage(provider, body)
+            if not model and not any(used.values()) and stream_err is None:
+                h.log_message("no model or usage in a %s reply (Content-Type %s, Content-Encoding %s), which begins %r",
+                              provider, resp.getheader("Content-Type"), resp.getheader("Content-Encoding"), body[:120])
+            if not asked:  # a request that named no model is priced as the model that answered
+                entry = self.litellm.find(model)[1]
+            if any(used[k] for k in USED):
+                usd = price(entry, used)
+            elif stream_err is not None and entry is not None:
+                usd = 0.0  # priced model, but stream broke before usage arrived: don't report as unpriced
+            else:
+                usd = None  # no usage: unknown
+            row = {"at": time.time(), "who": who, "model": model or asked, "route": f"{provider}/{route}", **used,
+                   "usd": None if usd is None else round(usd, 8), **({"via": "litellm"} if translated else {}),
+                   **({"job": job["id"]} if job else {}), **({"incomplete": True} if stream_err is not None else {})}
+            with self.lock:
+                if ticket is not None:
+                    self.in_flight.pop(ticket, None)
+                    ticket = None
+                add(self.by, row)
+                add(self.by_job, row, "job")
+                print(json.dumps(row), file=self.file, flush=True)
+                os.fsync(self.file.fileno())  # budgets are counted from the ledger: a crash must not forget a call
         finally:
-            conn.close()
-        if not model_call or not 200 <= status < 300:
-            return
-        body = plain(bytes(seen), resp.getheader("Content-Encoding") or "")
-        model, used = usage(provider, body)
-        if not model and not any(used.values()):
-            h.log_message("no model or usage in a %s reply (Content-Type %s, Content-Encoding %s), which begins %r",
-                          provider, resp.getheader("Content-Type"), resp.getheader("Content-Encoding"), body[:120])
-        if not asked:  # a request that named no model is priced as the model that answered
-            entry = self.litellm.find(model)[1]
-        usd = price(entry, used) if any(used[k] for k in USED) else None  # no usage: unknown
-        row = {"at": time.time(), "who": who, "model": model or asked, "route": f"{provider}/{route}", **used,
-               "usd": None if usd is None else round(usd, 8), **({"via": "litellm"} if translated else {}),
-               **({"job": job["id"]} if job else {})}
-        with self.lock:
-            add(self.by, row)
-            add(self.by_job, row, "job")
-            print(json.dumps(row), file=self.file, flush=True)
-            os.fsync(self.file.fileno())  # budgets are counted from the ledger: a crash must not forget a call
+            if ticket is not None:
+                with self.lock:
+                    self.in_flight.pop(ticket, None)

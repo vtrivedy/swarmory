@@ -4,14 +4,18 @@ contract. The session and `setup` get the gateway as each of base.APIS, with the
 takes in place of a key. Run locally, the agent's command must already be on the server's PATH, as `setup` does not
 install it there; its output is kept as text, and messages reach it at its next turn only."""
 import os
+import re
 import shlex
 import subprocess
 
 from .base import Endpoint, Login, cut, gateway
 
+PLACEHOLDER = re.compile(r"\{(?:prompt|model|provider|model_id)\}")
+
 
 class Command:
     hooks = False
+    takes_args = True
     provider = None
     login = None
     login_from = ""
@@ -27,13 +31,21 @@ class Command:
     def env(self, llm: Endpoint) -> dict:
         return gateway(llm)
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         if self.setup:
-            subprocess.run(["sh", "-c", self.setup], cwd=work, env={**os.environ, **self.env(llm)})
+            r = subprocess.run(["sh", "-c", self.setup], cwd=work, env={**os.environ, **self.env(llm)},
+                               capture_output=True, text=True)
+            if r.returncode:
+                detail = (r.stderr or r.stdout).strip()
+                raise RuntimeError(f"setup failed (exit {r.returncode})" + (f": {detail}" if detail else ""))
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         words = shlex.split(self.resume if resume else self.run)
-        return [w.replace("{model}", model or "").replace("{prompt}", prompt) for w in words] + args
+        raw = model or ""
+        provider, slash, rest = raw.partition("/")
+        subs = {"{prompt}": prompt, "{model}": raw, "{provider}": provider if slash else "",
+                "{model_id}": rest if slash else raw}
+        return [PLACEHOLDER.sub(lambda m: subs[m[0]], w) for w in words] + args
 
     def signin(self, login: str) -> Login | None:
         return None

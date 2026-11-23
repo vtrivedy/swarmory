@@ -117,7 +117,7 @@ class Team:
         try:
             self.log.write(json.dumps(ev) + "\n")
             self.log.flush()
-            if ev["type"] not in ("read", "delivered"):  # a crash that loses one costs a message shown again
+            if ev["type"] not in ("read", "delivered", "turn", "wait"):  # a crash that loses one only replays a turn or wait
                 os.fsync(self.log.fileno())
         except OSError as e:  # the line may be on disk but not in memory: exit, and the restart replays what landed
             os.write(2, f"swarmory server: the log write failed ({e!r}); exiting\n".encode())
@@ -171,7 +171,7 @@ class Team:
         elif t == "read":
             key = (ev["member"], ev["conv"])
             self.marks[key] = max(self.marks.get(key, 0), ev["upto"])
-        elif t == "delivered":
+        elif t in ("delivered", "woke"):
             self.inboxes[ev["member"]] = [m for m in self.inboxes.get(ev["member"], ()) if m["seq"] > ev["upto"]]
         elif t == "wait":
             self.waiting[ev["member"]] = ev["at"]
@@ -194,8 +194,9 @@ class Team:
         self.messages[m["id"]] = m
         self.order.append(m)
         self.convs.setdefault(m["conv"], []).append(m)
-        self.recipients[m["id"]] = ev["recipients"]
-        for x in ev["recipients"]:
+        recipients = ev.get("recipients") if "recipients" in ev else ev.get("wakes", [])
+        self.recipients[m["id"]] = recipients
+        for x in recipients:
             self.inboxes.setdefault(x, []).append(m)
         issue = self.board.get(m["conv"])
         if issue:
@@ -483,6 +484,8 @@ class Team:
                 return {"issue": self.issue_view(hit)}
             i = self.find_issue(req)
             now = self.board[i]["assignees"]
+            if req.get("if_unassigned") and now:
+                raise ValueError(f"{i} is already assigned to {', '.join(now)}")
             add = [x for x in self.names(who, req.get("add") or []) if x not in now]
             remove = [x for x in self.names(who, req.get("remove") or []) if x in now and x not in add]
             if not add and not remove:
@@ -538,11 +541,11 @@ class Team:
                 return False
             self.bells[who].wait((due or end) - now)
 
-    def news(self, who: str, head) -> dict:
+    def news(self, who: str, main) -> dict:
         """Under the lock: what changed since `who`'s last turn, which starts its next turn."""
         since, mail = self.turns.get(who), self.undelivered(who)
         shown = mail[:TURN_MOST]
-        self.append({"type": "turn", "member": who, "main": head(), "delivered": shown[-1]["seq"] if shown else 0})
+        self.append({"type": "turn", "member": who, "main": main, "delivered": shown[-1]["seq"] if shown else 0})
         self.mark_read(who, shown)
         channels = Counter(m["conv"] for m in self.order if m["conv"] in self.channels and self.unread(who, m))
         return {"done": True, "messages": shown, "more": len(mail) - len(shown), "channels": dict(channels),
@@ -556,21 +559,32 @@ class Team:
         with self.lock:
             if who not in self.waiting:
                 self.append({"type": "wait", "member": who})
-            if self.hold(who, time.time() + timeout, gone) or (self.undelivered(who) and not gone()):
-                return self.news(who, head)
-            return {"done": False, "idle": self.waiting[who] + IDLE}
+            ready = self.hold(who, time.time() + timeout, gone) or (bool(self.undelivered(who)) and not gone())
+            if not ready:
+                return {"done": False, "idle": self.waiting[who] + IDLE}
+            ticket = self.holds.get(who)
+        main = head()
+        with self.lock:
+            if self.holds.get(who) is not ticket or gone():
+                return {"done": False, "idle": self.waiting.get(who, time.time()) + IDLE}
+            return self.news(who, main)
 
     def next(self, who: str, req: dict, gone=lambda: False, head=lambda: None) -> dict:
         """An agent's worker, between two turns: the next turn starts at once, unless the agent waits; then on a
         message for it, or IDLE seconds after it began to wait. Holds up to req's timeout (at most 300 s), then
         answers {"done": false}; call again."""
-        end = time.time() + number(req, "timeout", 300, 0, 300)
+        end, ticket = time.time() + number(req, "timeout", 300, 0, 300), None
         with self.lock:
             if who in self.waiting:
                 start = self.waiting[who] + IDLE
                 if not self.hold(who, min(end, start), gone) and time.time() < start:
                     return {"done": False}
-            return self.news(who, head)
+                ticket = self.holds.get(who)
+        main = head()
+        with self.lock:
+            if ticket is not None and (self.holds.get(who) is not ticket or gone()):
+                return {"done": False}
+            return self.news(who, main)
 
 
 

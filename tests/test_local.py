@@ -10,7 +10,7 @@ import pytest
 
 from swarmory.backends import local
 from swarmory.backends.base import WorkerSpec
-from swarmory.control_plane.supervisor import RESTART, Want, plan
+from swarmory.control_plane.supervisor import RESTART, Supervisor, Want, plan
 
 PS = '''import datetime, subprocess, sys
 r = subprocess.run([{real!r}] + sys.argv[1:], capture_output=True, text=True)
@@ -62,3 +62,17 @@ def test_a_stepped_clock_starts_no_second_worker(tmp_path, monkeypatch):
             os.killpg(pid, 9)
         except OSError:
             pass
+
+
+def test_supervisor_reads_live_workers_outside_its_lock():
+    seen = []
+
+    class Stub:
+        def live(self):
+            seen.append(sup.lock.locked())
+            return frozenset()
+
+    runs = type("Runs", (), {"loaded": lambda self: []})()
+    sup = Supervisor(runs, Stub(), "http://127.0.0.1:7700")
+    sup.tick()
+    assert seen == [False]

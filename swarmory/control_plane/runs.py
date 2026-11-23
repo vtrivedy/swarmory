@@ -327,8 +327,10 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
         if m["harness"] not in built_in and not all("{prompt}" in (m.get(k) or "") for k in ("run", "resume")):
             raise ValueError(f"team entry {n}: {m['harness']} is not built in ({', '.join(built_in)}), so it needs "
                              "run and resume, each a command with {prompt} in it.")
-        model = m.get("model") or ""
-        if harness.of(m).provider is None and (model.partition("/")[0] not in APIS or not owner(model)):
+        model, h = m.get("model") or "", harness.of(m)
+        if m.get("args") and not h.takes_args:
+            raise ValueError(f"team entry {n}: {m['harness']} takes no args.")
+        if h.provider is None and (model.partition("/")[0] not in APIS or not owner(model)):
             raise ValueError(f"team entry {n}: {m['harness']} needs a model the gateway knows, named with its "
                              f"provider ({', '.join(APIS)}), such as anthropic/claude-sonnet-5-5.")
     line = lambda m, k: " ".join((m.get(k) or "").split()) or None  # noqa: E731

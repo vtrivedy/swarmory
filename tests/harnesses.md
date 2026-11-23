@@ -29,8 +29,7 @@ passes once every agent has pushed to main.
 
 ## Known limits
 
-- pi 0.73.1 does not list today's models, so the pi harness declares the agent's model in `models.json`. pi then gives
-  it its defaults for an unknown model: a 128k context, 16k output tokens, and no extended thinking.
+- pi 0.73.1 does not list today's models, so the pi harness declares the agent's model in `models.json` with `contextWindow`, `maxTokens`, and `reasoning` copied from LiteLLM's price table when present.
 
 ## What to look at after a run
 

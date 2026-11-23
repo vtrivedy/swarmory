@@ -25,11 +25,12 @@ class Fake:
     conversations = "talks"
     sandboxed = {}
     hooks = False
+    takes_args = True
 
     def env(self, llm: Endpoint) -> dict:
         return {}
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         pass
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:

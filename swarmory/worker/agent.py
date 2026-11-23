@@ -54,6 +54,7 @@ class Agent:
         self.conversations = self.harness.conversations and Path.home() / self.harness.home / \
             self.harness.conversations
         self.model = ENV.get("SWARMORY_MODEL") or None
+        self.model_meta = json.loads(ENV["SWARMORY_MODEL_META"]) if ENV.get("SWARMORY_MODEL_META") else {}
         self.args = [a for a in ENV.get("SWARMORY_ARGS", "").split("\n") if a]  # team.toml's args, one per line
         self.running = None  # the command run() waits on
         self.lock = threading.Lock()  # the saver and a session's end both upload
@@ -129,12 +130,19 @@ class Agent:
         llm, resumed = Endpoint(ENV["SWARMORY_URL"].rstrip("/") + "/llm", ENV["SWARMORY_TOKEN"]), self.started()
         if not resumed:
             prompt = self.prompt + (f"\n\n{fresh}" if fresh else "")
-        self.harness.prepare(self.work, llm)
-        cmd = self.harness.command(prompt, resumed, self.model, self.args)
-        say(f"session {n} started ({'resumed' if resumed else 'new'})")
         file, err = self.sessions / f"session-{n}.jsonl", self.sessions / f"session-{n}.err"
         file.write_bytes(b"")
         self.mark(file, "start", prompt=prompt, resumed=resumed)
+        try:
+            self.harness.prepare(self.work, llm, self.model, self.model_meta)
+            cmd = self.harness.command(prompt, resumed, self.model, self.args)
+        except Exception as e:
+            err.write_text(f"{e}\n")
+            self.mark(file, "end", status=1, stderr=str(e)[-2000:])
+            say(f"session {n} failed to prepare: {e}")
+            self.upload(sync=True)
+            return 1
+        say(f"session {n} started ({'resumed' if resumed else 'new'})")
         with open(file, "ab") as out, open(err, "wb") as errors:
             # not the worker's PYTHONPATH, which is for its own imports: the session's `swarmory` sets its own
             env = {k: v for k, v in {**ENV, **self.harness.env(llm)}.items() if k != "PYTHONPATH"}
@@ -177,7 +185,7 @@ class Agent:
         return ""
 
     def spent(self) -> bool:
-        """The run's budget is spent, so every session fails until the operator raises it."""
+        """The run's budget is spent, so model calls are refused until the run's budget changes."""
         code, out = self.run(["swarmory", "spend", "--json"], stdout=subprocess.PIPE, text=True)
         try:
             r = json.loads(out) if code == 0 else {}
@@ -206,11 +214,14 @@ class Agent:
             last, fresh = self.session(prompt, fresh), ""
             if left() <= 0:
                 break
-            if last and self.spent():  # no call can succeed: wait for a message, and keep the conversation
-                say("the run's budget is spent: waiting for a message for this agent")
+            if last and self.spent():  # no call can succeed: hold without spinning on idle wakes, and keep the conversation
+                say("the run's budget is spent: waiting for a message or budget change")
                 fails = 0
-                self.run(["swarmory", "wait"], stdout=subprocess.DEVNULL)
-                prompt = news = self.turn()
+                while left() > 0:
+                    self.run(["swarmory", "wait"], stdout=subprocess.DEVNULL)
+                    prompt = news = self.turn()
+                    if not prompt or "Messages for you:" in prompt or not self.spent():
+                        break
                 continue
             if last:  # a failed session is retried a minute later, until the deadline
                 fails += 1

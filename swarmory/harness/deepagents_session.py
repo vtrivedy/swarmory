@@ -23,7 +23,9 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 PROVIDERS = {"anthropic": ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
              "openai": ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
              "gemini": ("google_genai", "GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY")}
-CONVERSATIONS = Path.home() / ".deepagents" / "conversations"
+HOME_DIR = Path.home() / ".deepagents"
+CONVERSATIONS = HOME_DIR / "conversations"
+DB = HOME_DIR / "session.db"
 
 
 def emit(**event):
@@ -71,16 +73,33 @@ def events(update: dict):
 
 
 def main(name: str, prompt: str, flag: str = ""):
-    CONVERSATIONS.mkdir(parents=True, exist_ok=True)
-    saver = SqliteSaver(sqlite3.connect(CONVERSATIONS / "session.db", check_same_thread=False))
-    config = {"configurable": {"thread_id": "main"}, "recursion_limit": 100_000}
-    if flag == "--resume" and saver.get_tuple(config) is None:  # a session that ended before its first checkpoint
-        sys.exit(f"There is no conversation to resume in {CONVERSATIONS}.")
-    backend = LocalShellBackend(root_dir=os.getcwd(), virtual_mode=False, inherit_env=True, timeout=1800)
-    agent = create_deep_agent(model(name), backend=backend, checkpointer=saver, middleware=[inbox])
-    emit(kind="init", model=name, tools=[], mcp=[])
-    for update in agent.stream({"messages": [HumanMessage(prompt)]}, config, stream_mode="updates"):
-        events(update)
+    HOME_DIR.mkdir(parents=True, exist_ok=True)
+    if flag != "--resume":
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{DB}{suffix}").unlink(missing_ok=True)
+    conn = sqlite3.connect(DB, check_same_thread=False)
+    try:
+        saver = SqliteSaver(conn)
+        config = {"configurable": {"thread_id": "main"}, "recursion_limit": 100_000}
+        if flag == "--resume" and saver.get_tuple(config) is None:
+            sys.exit(f"There is no conversation to resume in {CONVERSATIONS}.")
+        backend = LocalShellBackend(root_dir=os.getcwd(), virtual_mode=False, inherit_env=True, timeout=1800)
+        agent = create_deep_agent(model(name), backend=backend, checkpointer=saver, middleware=[inbox])
+        emit(kind="init", model=name, tools=[], mcp=[])
+        marked = False
+        try:
+            for update in agent.stream({"messages": [HumanMessage(prompt)]}, config, stream_mode="updates"):
+                if not marked:
+                    CONVERSATIONS.mkdir(parents=True, exist_ok=True)
+                    (CONVERSATIONS / "checkpoint").touch()
+                    marked = True
+                events(update)
+        finally:
+            if not marked and saver.get_tuple(config) is not None:
+                CONVERSATIONS.mkdir(parents=True, exist_ok=True)
+                (CONVERSATIONS / "checkpoint").touch()
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

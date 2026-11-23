@@ -142,6 +142,12 @@ def busy(t: Team):
     t.assign("ken", {"id": "i2", "remove": ["alan"], "nonce": "s7"})
     t.join("dennis", {"name": "i2"})
     t.leave("ken", {"name": "i2"})
+    t.new("ada", {"title": "Solo", "nonce": "s9"})
+    assert t.assign("ada", {"id": "i3", "add": ["me"], "if_unassigned": True})["issue"]["assignees"] == ["ada"]
+    with pytest.raises(ValueError, match="already assigned to ada"):
+        t.assign("grace", {"id": "i3", "add": ["me"], "if_unassigned": True})
+    assert t.assign("grace", {"id": "i3", "add": ["me"]})["issue"]["assignees"] == ["ada", "grace"]
+    assert cli.request("assign", ["i3", "+me"], {"--if-unassigned": True})["if_unassigned"] is True
     t.send("vivek", {"to": "dm:ada:vivek", "text": "status?", "nonce": "s8"})
     t.read("ada", {"limit": 2})
     assert t.wait("grace", {"timeout": 0})["done"], "grace's @mention should have woken her"
@@ -174,6 +180,12 @@ def test_the_log_replays_to_what_everyone_saw_and_a_torn_last_line_is_dropped(tm
     assert views(replayed) == seen and views(torn) == seen
     torn.send("ada", {"to": "general", "text": "after the tear"})
     assert views(restarted(torn.dir, tmp_path / "again")) == views(torn)
+    # Pre-turns logs used "wakes" and "woke" instead of "recipients" and "delivered"
+    legacy = tmp_path / "legacy"
+    shutil.copytree(t.dir, legacy)
+    (legacy / "log.jsonl").write_bytes(good.replace(b'"recipients":', b'"wakes":')
+                                       .replace(b'"type": "delivered"', b'"type": "woke"'))
+    assert views(Team(legacy)) == seen
     (tmp_path / "bad").mkdir()
     shutil.copy(t.dir / "config.json", tmp_path / "bad")
     (tmp_path / "bad" / "log.jsonl").write_bytes(good.replace(b"\n", b"\nnot json\n", 1))

@@ -9,6 +9,7 @@ timed out."""
 import argparse
 import base64
 import contextlib
+import fcntl
 import http.client
 import io
 import json
@@ -44,7 +45,7 @@ swarmory leave ID                        stop following it, until you comment, a
 swarmory issues [--mine] [--status S]    the board: open issues, or those with status S
 swarmory issue ID                        one issue and its whole thread
 swarmory new TITLE... [--body TEXT|-] [--assign a,b]  me works there too
-swarmory assign ID +ada -grace ...       +me works
+swarmory assign ID +ada -grace ... [--if-unassigned]  +me works; --if-unassigned refuses if already assigned
 swarmory move ID todo|doing|done|canceled [NOTE...]
 swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal]
              [--hours H] [--budget USD] [--to WHERE]
@@ -84,7 +85,8 @@ COMMANDS = {
     "me": (0, 0, ()), "who": (0, 0, ()), "read": (0, 1, ("--all", "--limit=")),
     "send": (1, None, ("--reply=", "--file=")), "get": (1, 2, ()),
     "channel": (1, 1, ("--about=",)), "join": (1, 1, ()), "leave": (1, 1, ()), "issue": (1, 1, ()),
-    "issues": (0, 0, ("--mine", "--status=")), "new": (1, None, ("--body=", "--assign=")), "assign": (2, None, ()),
+    "issues": (0, 0, ("--mine", "--status=")), "new": (1, None, ("--body=", "--assign=")),
+    "assign": (2, None, ("--if-unassigned",)),
     "move": (2, None, ()), "wait": (0, 0, ("--timeout=",)), "login": (0, 2, ()),
 
     # agent.py's and its hook's, so not in USAGE: sends the server new bytes of a folder's session files and of
@@ -95,7 +97,8 @@ COMMANDS = {
     "use": (1, 1, ()), "runs": (0, 0, ()), "status": (0, 1, ()), "stop": (0, 1, ()), "export": (0, 2, ()),
 }
 FIELD = {"--all": "all", "--limit": "limit", "--reply": "reply_to", "--about": "about", "--mine": "mine",
-         "--status": "status", "--body": "body", "--assign": "assignees", "--why": "why"}
+         "--status": "status", "--body": "body", "--assign": "assignees", "--why": "why",
+         "--if-unassigned": "if_unassigned"}
 NONCE = ("send", "channel", "new", "assign", "move", "job")  # each carries a nonce, so one sent twice acts once
 UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029]")
 LOGIN = os.environ.get("SWARMORY_LOGIN") or os.path.expanduser("~/.swarmory/login")
@@ -451,13 +454,17 @@ def inbox_hook():
     call."""
     asked = Path(os.path.dirname(LOGIN)) / "inbox-asked"
     try:
-        if time.time() - asked.stat().st_mtime < INBOX_EVERY:
-            return
-    except OSError:
-        pass
-    try:
-        asked.touch()
-        text = post("inbox", {}, 10)["text"]
+        asked.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with open(asked, "a+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            f.seek(0)
+            raw = f.read().strip()
+            if raw and time.time() - float(raw) < INBOX_EVERY:
+                return
+            text = post("inbox", {}, 10)["text"]
+            f.seek(0)
+            f.truncate()
+            f.write(f"{time.time():.3f}\n")
     except Exception:  # noqa: BLE001: the tool call goes on without messages
         return
     if text:

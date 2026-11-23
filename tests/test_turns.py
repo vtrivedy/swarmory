@@ -8,6 +8,7 @@ from test_team import make
 
 from swarmory import cli
 from swarmory.control_plane import team as team_
+from swarmory.control_plane.verbs import me_text, news_text
 from swarmory.harness.antigravity import Antigravity
 from swarmory.harness.claude_code import ClaudeCode
 from swarmory.harness.codex import Codex
@@ -26,10 +27,17 @@ def held(t, who):
 def test_the_next_turn_starts_at_once_unless_the_agent_waits_and_each_message_reaches_it_once(tmp_path, monkeypatch):
     monkeypatch.setattr(team_, "SETTLE", 0.2)
     t = make(tmp_path / "run")
+    fsyncs = []
+    monkeypatch.setattr(team_.os, "fsync", lambda fd: fsyncs.append(fd))
     t.send("grace", {"to": "general", "text": "plan: grace takes i1"})
-    turn = t.next("grace", {"timeout": 0})
-    assert turn["done"] and turn["messages"] == []  # at once, with nothing new
-    assert t.wait("grace", {})["done"] is False  # nothing for her: she waits
+    assert len(fsyncs) == 1
+    def unlocked_head():
+        assert not t.lock.locked(), "head() must not run while Team.lock is held"
+        return "abc1234"
+    turn = t.next("grace", {"timeout": 0}, head=unlocked_head)
+    assert turn["done"] and turn["messages"] == [] and turn["main"] == "abc1234"  # at once, with nothing new
+    assert t.wait("grace", {}, head=unlocked_head)["done"] is False  # nothing for her: she waits
+    assert len(fsyncs) == 1, "turn and wait skip fsync"
     assert t.next("grace", {"timeout": 0}) == {"done": False}
     th, out = held(t, "grace")
     t.send("ada", {"to": "general", "text": "fyi, nothing for anyone"})  # for no one: she stays held
@@ -56,19 +64,29 @@ def test_the_next_turn_starts_at_once_unless_the_agent_waits_and_each_message_re
     assert [m["text"] for m in t.inbox("grace", {})["messages"]] == ["@grace look at this"]
     assert t.me("grace", {})["unread"] == {"general": 3}  # both fyis stay unread: the mention did not hide them
 
+    base = {"done": True, "messages": [], "more": 0, "channels": {}, "commits": [], "commits_more": 0, "deadline": 2e9}
+    assert "Budget:" not in news_text(base, {})
+    assert "Budget: $2.50 of $10.00 spent." in news_text({**base, "budget": 10, "spent": 2.5}, {})
+    me_base = {"me": {"name": "Ada", "id": "ada", "kind": "agent"}, "run": "r1", "unread": {}, "issues": [],
+               "deadline": 2e9}
+    assert "Budget: $2.50 of $10.00 spent." in me_text({**me_base, "budget": 10, "spent": 2.5}, {})
+
 
 class Turns:
     """The worker's `swarmory wait`, `swarmory next` and `swarmory spend --json`, recording each wait and next."""
 
-    def __init__(self, spend):
+    def __init__(self, spend, replies=None):
         self.spend, self.asked = spend, []
+        self.replies = list(replies or ["Since your last turn:\nMessages for you:\n  vivek: budget raised\n"])
 
     def __call__(self, cmd, **popen):
         if cmd[:2] == ["swarmory", "spend"]:
             return 0, json.dumps(self.spend)
         assert cmd[:2] in (["swarmory", "wait"], ["swarmory", "next"]), cmd
         self.asked.append(cmd[1])
-        return 0, "Since your last turn:\nMessages for you:\n  vivek: budget raised\n"
+        if cmd[1] == "next" and len(self.replies) > 1:
+            return 0, self.replies.pop(0)
+        return 0, self.replies[0]
 
 
 def test_a_spent_budget_holds_the_agent_until_a_message_and_keeps_its_conversation(monkeypatch, tmp_path):
@@ -77,7 +95,11 @@ def test_a_spent_budget_holds_the_agent_until_a_message_and_keeps_its_conversati
     for k in ("SWARMORY_URL", "SWARMORY_TOKEN", "SWARMORY_NAME", "SWARMORY_ID"):
         monkeypatch.setitem(agent.ENV, k, "x")
     a = object.__new__(agent.Agent)
-    a.sessions, a.run = tmp_path / "sessions", Turns({"budget": 1, "by": {"ada": {"usd": 1.2}}})
+    a.sessions = tmp_path / "sessions"
+    a.run = Turns({"budget": 1, "by": {"ada": {"usd": 1.2}}}, [
+        "Nothing new since your last turn.\nAbout 10 minutes left.\n",
+        "Since your last turn:\nMessages for you:\n  vivek: budget raised\n",
+    ])
     a.clone, a.saver, a.started, a.count = lambda: None, lambda: None, lambda: False, lambda: 0
     a.set_aside = lambda *_: pytest.fail("a spent budget threw away the conversation")
     prompts = []
@@ -90,7 +112,7 @@ def test_a_spent_budget_holds_the_agent_until_a_message_and_keeps_its_conversati
 
     a.session = session
     a.live()
-    assert a.run.asked == ["wait", "next", "next"] and prompts[1].startswith("Since your last turn:")
+    assert a.run.asked == ["wait", "next", "wait", "next", "next"] and prompts[1].startswith("Since your last turn:")
 
 
 def test_a_command_agent_resumes_only_after_a_session_that_succeeded(monkeypatch, tmp_path):
@@ -121,8 +143,11 @@ def test_every_harness_with_a_hook_gets_messages_mid_turn_in_its_own_answer(tmp_
     ClaudeCode().prepare(str(tmp_path / "work"), None)
     Codex().prepare(str(tmp_path / "work"), type("Endpoint", (), {"url": "http://x"})())
     Antigravity().prepare(str(tmp_path / "work"), None)
-    monkeypatch.setenv("SWARMORY_MODEL", "anthropic/claude-haiku-5-5")
-    Pi().prepare(str(tmp_path / "work"), type("Endpoint", (), {"url": "http://x"})())
+    Pi().prepare(str(tmp_path / "work"), type("Endpoint", (), {"url": "http://x"})(),
+                 "anthropic/claude-haiku-5-5",
+                 {"max_input_tokens": 200000, "max_output_tokens": 64000, "supports_reasoning": True})
+    pi_model = json.loads((tmp_path / ".pi/agent/models.json").read_text())["providers"]["anthropic"]["models"][0]
+    assert pi_model == {"id": "claude-haiku-5-5", "contextWindow": 200000, "maxTokens": 64000, "reasoning": True}
     for f, event in ((".claude/settings.json", "PostToolUse"), (".codex/hooks.json", "PostToolUse"),
                      (".gemini/config/hooks.json", "PreInvocation")):
         hooks = json.loads((tmp_path / f).read_text())
@@ -149,3 +174,25 @@ def test_every_harness_with_a_hook_gets_messages_mid_turn_in_its_own_answer(tmp_
     monkeypatch.setenv("SWARMORY_HARNESS", "pi")
     cli.inbox_hook()
     assert json.loads(capsys.readouterr().out) == {"text": "[swarmory] ada: hi"}
+
+    # A transient error must not stamp the throttle, and overlapping calls must not double-poll
+    (tmp_path / ".swarmory" / "inbox-asked").unlink()
+    entered, release, calls = threading.Event(), threading.Event(), []
+
+    def flaky_then_slow(verb, body, timeout):
+        calls.append(verb)
+        if len(calls) == 1:
+            raise ConnectionError("down")
+        entered.set()
+        release.wait(5)
+        return {"text": "[swarmory] ada: once"}
+
+    monkeypatch.setattr(cli, "post", flaky_then_slow)
+    cli.inbox_hook()
+    t = threading.Thread(target=cli.inbox_hook)
+    t.start()
+    assert entered.wait(5)
+    cli.inbox_hook()
+    release.set()
+    t.join()
+    assert calls == ["inbox", "inbox"] and json.loads(capsys.readouterr().out) == {"text": "[swarmory] ada: once"}

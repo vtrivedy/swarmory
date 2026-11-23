@@ -56,6 +56,12 @@ def left(deadline: float) -> str:
     return "About %d minutes left." % max(0, round((deadline - time.time()) / 60))
 
 
+def budget_line(r: dict) -> list:
+    if r.get("budget") is None:
+        return []
+    return ["Budget: %s of %s spent." % (money(r.get("spent") or 0), money(r["budget"]))]
+
+
 def size(n: int) -> str:
     return "%d B" % n if n < 1024 else "%.0f KB" % (n / 1024) if n < 1 << 20 else "%.1f MB" % (n / (1 << 20))
 
@@ -86,7 +92,7 @@ def me_text(r: dict, req: dict) -> str:
         "Unread: %s. Run `swarmory read`." % ", ".join(unread) if unread else "Nothing unread.",
         "Your open issues:\n  " + "\n  ".join(map(issue_line, r["issues"])) if r["issues"]
         else "No open issues assigned to you.",
-        left(r["deadline"]) + " Commands: `swarmory help`."])
+        left(r["deadline"]) + " Commands: `swarmory help`.", *budget_line(r)])
 
 
 def who_text(r: dict, req: dict) -> str:
@@ -143,7 +149,7 @@ def news_text(r: dict, req: dict) -> str:
         parts += ["New on main:", *("  " + c for c in r["commits"])]
         parts += ["  and %d more: git log" % r["commits_more"]] if r["commits_more"] else []
     return "\n".join(["Since your last turn:" if parts else "Nothing new since your last turn.", *parts,
-                      left(r["deadline"])])
+                      left(r["deadline"]), *budget_line(r)])
 
 
 def wait_text(r: dict, req: dict) -> str:
@@ -257,8 +263,11 @@ def team(method: str) -> Callable:
 
 
 def clock(run, out: dict) -> dict:
-    """An answer with the run and its deadline, which `swarmory` and a turn tell the time left from."""
-    return {**out, "run": run.id, "deadline": run.config["deadline"]}
+    """An answer with the run, its deadline, and its budget/spend when budgeted."""
+    budget = run.config.get("budget")
+    extra = {"budget": budget, "spent": sum(u.get("usd") or 0 for u in run.proxy.totals().values())} \
+        if budget is not None else {}
+    return {**out, "run": run.id, "deadline": run.config["deadline"], **extra}
 
 
 def jobs(method: str) -> Callable:
@@ -385,7 +394,8 @@ VERBS = {v.name: v for v in [
     Verb("assign", "run", "team", "Assigns members to an issue, or unassigns them.", team("assign"),
          lambda r, req: issue_line(r["issue"]), (
              Param("id", "string", "the issue", True), Param("add", "array", "member names; me is you"),
-             Param("remove", "array", "member names; me is you")), WRITE),
+             Param("remove", "array", "member names; me is you"),
+             Param("if_unassigned", "boolean", "refuse if anyone is already assigned to the issue")), WRITE),
     Verb("move", "run", "team", "Moves an issue to a status, with an optional note in its thread.", team("move"),
          lambda r, req: issue_line(r["issue"]), (
              Param("id", "string", "the issue", True), Param("status", "string", "its new status", True, STATUSES),

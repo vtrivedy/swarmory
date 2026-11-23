@@ -18,6 +18,7 @@ class ClaudeCode:
     home = ".claude"
     conversations = "projects"
     hooks = True
+    takes_args = True
     sandboxed = {"IS_SANDBOX": "1",  # lets it skip its permission prompts as root
                  "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1",
                  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
@@ -25,7 +26,7 @@ class ClaudeCode:
     def env(self, llm: Endpoint) -> dict:
         return {"ANTHROPIC_BASE_URL": f"{llm.url}/anthropic", "ANTHROPIC_API_KEY": llm.token}
 
-    def prepare(self, work: str, llm: Endpoint) -> None:
+    def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
         """Excludes the instruction files in every folder above `work`, which it would read (locally, swarmory's own),
         and adds the hook that delivers messages between tool calls."""
         above = Path(os.path.realpath(work)).parents  # real: as the session sees its cwd
