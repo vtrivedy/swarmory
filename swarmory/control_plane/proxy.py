@@ -1,9 +1,10 @@
 """A run's gateway, inside the server: every model call a member makes comes here with the member's run token, never a
 key. The gateway forwards the call upstream with the real key, reads the tokens it used from the response (streamed or
 not), prices them from LiteLLM's price table (litellm.py), and writes them to the run's ledger.jsonl. It forwards only
-the routes in ROUTES. A model of another provider than the route's, named <provider>/<model> or by a bare name the
-price table lists under that provider, goes to LiteLLM, which translates the call. Each call is refused once the run
-or its job has spent its budget.
+the routes in ROUTES: Anthropic's Messages, OpenAI's Responses and Chat Completions, and Gemini's generateContent,
+streamGenerateContent and countTokens, so a coding agent that speaks any of them can use it. A model of another
+provider than the route's, named <provider>/<model> or by a bare name the price table lists under that provider, goes
+to LiteLLM, which translates the call. Each call is refused once the run or its job has spent its budget.
 
 litellm.py names the variables with the providers' API keys and upstreams. A run with subscriptions calls with the
 person's logins instead, the way each harness calls when it holds its login itself: each harness's file in
@@ -13,6 +14,7 @@ or login that isn't set turns that API off.
 import http.client
 import json
 import os
+import re
 import threading
 import time
 import zlib
@@ -32,15 +34,24 @@ FIELDS = {  # route: the request fields a translated call keeps; LiteLLM reads m
     "v1/responses": {"model", "input", "instructions", "tools", "tool_choice", "stream", "temperature", "top_p",
                      "max_output_tokens", "reasoning", "text", "parallel_tool_calls", "store", "include",
                      "previous_response_id", "prompt_cache_key", "truncation"},
-}
+    "v1/chat/completions": {"model", "messages", "tools", "tool_choice", "stream", "stream_options", "temperature",
+                            "top_p", "max_tokens", "max_completion_tokens", "stop", "response_format",
+                            "reasoning_effort", "parallel_tool_calls", "seed"},
+}  # Gemini's routes are never translated: a Gemini agent names only Gemini models
 ROUTES = {  # (provider, method, path) -> whether it is a model call, recorded in the ledger
     ("anthropic", "POST", "v1/messages"): True,
     ("anthropic", "POST", "v1/messages/count_tokens"): False,
     ("anthropic", "GET", "v1/models"): False,
     ("openai", "POST", "v1/responses"): True,
+    ("openai", "POST", "v1/chat/completions"): True,
     ("openai", "GET", "v1/models"): False,
+    ("gemini", "POST", "v1beta/models/*:generateContent"): True,  # *: the model, which Gemini names in the path
+    ("gemini", "POST", "v1beta/models/*:streamGenerateContent"): True,
+    ("gemini", "POST", "v1beta/models/*:countTokens"): False,
+    ("gemini", "GET", "v1beta/models"): False,
 }
-HOP = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding", "authorization", "x-api-key",
+KEY_HEADER = {"anthropic": "x-api-key", "openai": "authorization", "gemini": "x-goog-api-key"}
+HOP = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding", *KEY_HEADER.values(),
        "keep-alive", "proxy-connection", "te", "upgrade", "date", "server"}
 
 
@@ -64,6 +75,8 @@ def refuse(handler, provider: str, status: int, message: str):
     """An error in the caller's own API's format, so its harness shows the message."""
     if provider == "openai":
         body = {"error": {"message": message, "type": "proxy_error", "code": "proxy_error"}}
+    elif provider == "gemini":
+        body = {"error": {"code": status, "message": message, "status": "PROXY_ERROR"}}
     else:
         body = {"type": "error", "error": {"type": "proxy_error", "message": message}}
     data = json.dumps(body).encode()
@@ -102,10 +115,11 @@ def plain(body: bytes, encoding: str) -> bytes:
 
 def usage(provider: str, body: bytes):
     """(model, tokens used) from a reply, one JSON object or a stream of `data:` events, whatever its Content-Type
-    says: input (not from cache), cached, written (to cache) and output. OpenAI's input count includes the cached
-    part; Anthropic's doesn't."""
+    says: input (not from cache), cached, written (to cache) and output. OpenAI's and Gemini's input counts include
+    the cached part; Anthropic's doesn't. Gemini's output is its answer and its thinking."""
     try:
-        events = [json.loads(body)]
+        events = json.loads(body)
+        events = events if isinstance(events, list) else [events]  # a list: Gemini's streamed parts, without SSE
     except (ValueError, RecursionError):
         events = []
         for line in (x[5:] for x in body.splitlines() if x.startswith(b"data:")):
@@ -119,18 +133,24 @@ def usage(provider: str, body: bytes):
             continue
         r = e.get("message") or e.get("response") or e
         r = r if isinstance(r, dict) else e
-        model = r.get("model") or model
+        model = r.get("model") or r.get("modelVersion") or model
         u = r.get("usage") or e.get("usage") or {}
-        if provider == "anthropic":
+        if provider == "gemini" and isinstance(e.get("usageMetadata"), dict):  # each part has the totals so far
+            u = e["usageMetadata"]
+            cached = u.get("cachedContentTokenCount") or 0
+            used.update(input=(u.get("promptTokenCount") or 0) - cached, cached=cached,
+                        output=(u.get("candidatesTokenCount") or 0) + (u.get("thoughtsTokenCount") or 0))
+        elif provider == "anthropic":
             split = u.get("cache_creation")
             if isinstance(split, dict) and split.get("ephemeral_1h_input_tokens"):  # writes to the hour-long cache
                 used["written_1h"] = max(used.get("written_1h", 0), split["ephemeral_1h_input_tokens"])
             for key, field in (("input", "input_tokens"), ("cached", "cache_read_input_tokens"),
                                ("written", "cache_creation_input_tokens"), ("output", "output_tokens")):
                 used[key] = max(used[key], u.get(field) or 0)
-        elif u:
-            cached = (u.get("input_tokens_details") or {}).get("cached_tokens") or 0
-            used.update(input=(u.get("input_tokens") or 0) - cached, cached=cached, output=u.get("output_tokens") or 0)
+        elif u:  # Responses, or Chat Completions' prompt_ and completion_ names
+            cached = (u.get("input_tokens_details") or u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+            used.update(input=(u.get("input_tokens") or u.get("prompt_tokens") or 0) - cached, cached=cached,
+                        output=u.get("output_tokens") or u.get("completion_tokens") or 0)
     return model, used
 
 
@@ -169,7 +189,7 @@ class Proxy:
         self.ledger, self.budget, self.litellm = Path(data) / "ledger.jsonl", budget, litellm
         self.subscription = subscription
         self.logins = {}  # with subscriptions, provider: (upstream, harness, Login) of the first harness that has one
-        for h in reversed(HARNESSES) if subscription else ():
+        for h in reversed([h for h in HARNESSES if h.login]) if subscription else ():
             if login := env.get(h.login) and h.signin(env[h.login]):
                 self.logins[h.provider] = (upstream(env, h.provider, login.upstream), h, login)
         self.lock = threading.Lock()
@@ -211,6 +231,8 @@ class Proxy:
             return refuse(h, provider, 413, "Send a request of at most 32 MB.")
         body = h.rfile.read(n)
         route = rest.partition("?")[0].strip("/")
+        named = re.fullmatch(r"(v1beta/models/)([^/:]+)(:\w+)", route) if provider == "gemini" else None
+        route = named and f"{named[1]}*{named[3]}" or route
         model_call = ROUTES.get((provider, h.command, route))
         if model_call is None:
             return refuse(h, provider, 404, f"The server doesn't forward {h.command} {route}: it forwards only "
@@ -220,7 +242,11 @@ class Proxy:
         except (ValueError, RecursionError):
             req = None
         req = req if isinstance(req, dict) else None
-        asked = req.get("model") if req and isinstance(req.get("model"), str) else ""
+        asked = req.get("model") if req and isinstance(req.get("model"), str) else named and named[2] or ""
+        if route == "v1/chat/completions" and req and req.get("stream"):  # a stream gives its usage only if asked
+            options = req.get("stream_options") if isinstance(req.get("stream_options"), dict) else {}
+            req = {**req, "stream_options": {**options, "include_usage": True}}
+            body = json.dumps(req).encode()
         budgeted = self.budget is not None or job and job.get("budget") is not None
         owner, entry = self.litellm.find(asked)
         if model_call and budgeted and entry is None:
@@ -231,7 +257,8 @@ class Proxy:
             return refuse(h, provider, 503, f"The server holds no {owner} key, which {asked} needs: start the "
                           f"server with {owner.upper()}_API_KEY set.")
         # the model name LiteLLM serves; a subscription run's calls each stay with their own provider
-        translated = req is not None and not self.subscription and self.litellm.translates(provider, owner, asked)
+        translated = (req is not None and route in FIELDS and not self.subscription
+                      and self.litellm.translates(provider, owner, asked))
         if translated:  # to LiteLLM, which translates: only the fields the route defines, and no caller headers
             if not self.litellm.ensure():
                 return refuse(h, provider, 503, f"The server's LiteLLM, which serves {asked}, isn't running.")
@@ -250,7 +277,9 @@ class Proxy:
             path = rest
             if not self.subscription:
                 base, key = held
-                headers.update({"x-api-key": key} if provider == "anthropic" else {"authorization": f"Bearer {key}"})
+                headers[KEY_HEADER[provider]] = f"Bearer {key}" if provider == "openai" else key
+                # LiteLLM's Gemini upstream ends in /v1beta, and a Gemini agent's path starts with it
+                base = base.removesuffix("/v1beta")
             else:  # as the harness calls with its login
                 base, harness, login = held
                 if (login.expires or float("inf")) < time.time():

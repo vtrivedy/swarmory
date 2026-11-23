@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from swarmory import harbor
+from swarmory import harbor, harness
 from swarmory.backends.base import WorkerSpec
 
 from .policy import sha
@@ -68,6 +68,8 @@ def prompt(config: dict, member: dict) -> str:
         name=member["name"], id=member["id"], n=len(agents), roster="\n".join(roster),
         role=f"Your role: {member['role']}\n\n" if member.get("role") else "",
         idle=f"{IDLE // 60}",
+        hooks=" Messages for you also arrive between your tool calls, marked [swarmory]."
+        if harness.of(member).hooks else "",
         deadline=time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(config["deadline"])))
 
 
@@ -125,7 +127,8 @@ class Supervisor:
             {"SWARMORY_URL": f"{self.url}/r/{run.id}", "SWARMORY_TOKEN": token, "SWARMORY_ID": member["id"],
              "SWARMORY_NAME": member["name"], "SWARMORY_HARNESS": member["harness"],
              "SWARMORY_MODEL": member.get("model") or "", "SWARMORY_DEADLINE": str(c["deadline"]),
-             "SWARMORY_PROMPT": prompt(c, member), "SWARMORY_ARGS": "\n".join(member.get("args") or ())},
+             "SWARMORY_PROMPT": prompt(c, member), "SWARMORY_ARGS": "\n".join(member.get("args") or ()),
+             **{f"SWARMORY_{k.upper()}": member[k] for k in harness.COMMAND_FIELDS if member.get(k)}},
             tuple(c.get("grants", ())), (self.host, *c.get("allow", ())), f"runs/{run.id}/members/{member['id']}")
 
     def job(self, run, claimed: dict) -> WorkerSpec:

@@ -1,4 +1,4 @@
-"""Runs side by side, a column each, from their exports: messages, issues, wakes, pushes, commits, model calls, tokens
+"""Runs side by side, a column each, from their exports: messages, issues, turns, pushes, commits, model calls, tokens
 and cost.
 
     uv run tools/compare.py RUN_FOLDER...
@@ -39,7 +39,7 @@ def facts(run: Path) -> dict:
             "minutes active": round((events[-1]["at"] - events[0]["at"]) / 60) if events else 0,
             "messages": len(said), "of them DMs": sum(e["conv"].startswith("dm:") for e in said),
             "issues opened": len(board), "issues done": board.count("done"),
-            "issues doing at the end": board.count("doing"), "wakes": sum(e["type"] == "woke" for e in events),
+            "issues doing at the end": board.count("doing"), "turns": sum(e["type"] == "turn" for e in events),
             "pushes ok / refused": f"{sum(pushed)} / {len(pushed) - sum(pushed)}" if pushed else "not logged",
             "commits on main": commits, "model calls": sum(u["calls"] for u in by),
             "tokens in / out": f"{sum(u['input'] + u['cached'] + u['written'] for u in by):,} / "

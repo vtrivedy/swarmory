@@ -3,19 +3,19 @@
 # conversation, the test kills her worker. Once the server has started her again, the test kills the server, and
 # locally starts it again on the same data. It passes once the restarted server has found both agents' workers without
 # starting them again, ada and everyone have each made a model call since, ada's log shows her session resumed, her
-# restarted worker still has her work tree, tools/score.py reports 1.0 on the run's export, the watch link shows the
-# run, and no worker outlives the run (locally, her token no longer works once it is stopped either). It fails at the
+# restarted worker still has her work tree, every agent has pushed to main as the run's log shows through the watch
+# link, and no worker outlives the run (locally, her token no longer works once it is stopped either). It fails at the
 # deadline (24 minutes).
 #
 #   tests/e2e.sh            its own local server, on a fresh data folder and a free port
 #   tests/e2e.sh --modal    deploys the server, then a run on the Modal server `swarmory login` points at
 #
-# Model calls use the server's ANTHROPIC_API_KEY and OPENAI_API_KEY (locally, your shell's), or its
+# Model calls use the server's ANTHROPIC_API_KEY, OPENAI_API_KEY and GEMINI_API_KEY (locally, your shell's), or its
 # CLAUDE_CODE_OAUTH_TOKEN and CODEX_AUTH_JSON logins when E2E_SUBSCRIPTION is set. The team is
-# claude-code:claude-haiku-5-5=1 codex:gpt-6.1-sol=1; E2E_TEAM="codex:gpt-6.1-sol=2" replaces it.
+# claude-code:claude-haiku-5-5=1 codex:gpt-6.1-sol=1; E2E_TEAM="pi:openai/gpt-6-luna=2" replaces it.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"  # this checkout's swarmory, for the server, swarmory and tools/
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"  # this checkout's swarmory, for the server and swarmory
 modal=0
 [ "${1:-}" = --modal ] && modal=1
 extra=""
@@ -23,10 +23,10 @@ extra=""
 PY=$(uv run -q $extra python -c 'import sys; print(sys.executable)') || exit 1  # this checkout's swarmory
 swarmory() { "$PY" -m swarmory.cli "$@"; }
 say() { echo "e2e $(date +%H:%M:%S) $*"; }
+data=$(mktemp -d "${TMPDIR:-/tmp}/e2e.XXXXXX")  # locally the server's data; on Modal the export and logs
 args=(start tests/mission --hours 0.4)
 [ -n "${E2E_SUBSCRIPTION:-}" ] && args+=(--subscription)
 for t in ${E2E_TEAM:-claude-code:claude-haiku-5-5=1 codex:gpt-6.1-sol=1}; do args+=(--team "$t"); done
-data=$(mktemp -d "${TMPDIR:-/tmp}/e2e.XXXXXX")  # locally the server's data; on Modal the export and logs
 run="" server=""
 
 login() {  # login url|token: from the login file, which this test never prints
@@ -102,10 +102,11 @@ print(*[pick(r, 'container', 'id') for r in rows if str(pick(r, 'app') or '') ==
     serve
   fi
 }
-saved() {  # ada's home holds a conversation (a .jsonl), so her restart has one to resume
+saved() {  # ada's home holds a conversation (a .jsonl, or a .db), so her restart has one to resume
   if [ $modal = 1 ]; then
-    modal_sandbox ada "sys.exit(sb.exec('sh', '-c', 'find /swarmory/home -name \"*.jsonl\" | grep -q .').wait())"
-  else find "$(home)/home" -name '*.jsonl' 2> /dev/null | grep -q .; fi 2> /dev/null
+    modal_sandbox ada \
+      "sys.exit(sb.exec('sh', '-c', 'find /swarmory/home -name \"*.jsonl\" -o -name \"*.db\" | grep -q .').wait())"
+  else find "$(home)/home" -name '*.jsonl' -o -name '*.db' 2> /dev/null | grep -q .; fi 2> /dev/null
 }
 resumed() {  # on Modal: how many sessions ada's log says she resumed (her new sandbox appends to the same log)
   modal_sandbox ada \
@@ -116,29 +117,29 @@ restored() {  # ada's log since the kill: 1 her session resumed, 0 it started an
     [ "$(resumed 2> /dev/null || echo 0)" -gt "$mark" ] 2> /dev/null && echo 1
   else awk -v m="$mark" 'NR > m && /^session .* started/ {print (/resumed/) + 0; exit}' "$(home)/agent.log"; fi
 }
-watched() {  # the link `status` prints opens the run's log and ledger
+pushed() {  # every agent has pushed to main, as the run's log shows through the link `status` prints
   local link
   link=$(status | awk '$1 == "watch" {print $2}') && [ -n "$link" ] &&
-    curl -sf -H "Authorization: Bearer ${link#*#}" "${link%/view#*}/feed?log=0&ledger=0" |
-    "$PY" -c "import json, sys; d = json.load(sys.stdin); sys.exit(not (d['log'] and d['ledger']))"
+    curl -sf -H "Authorization: Bearer ${link#*#}" "${link%/view#*}/feed?log=0&ledger=0" | "$PY" -c "import json, sys
+log = json.load(sys.stdin)['log']
+agents = {e['member']['id'] for e in log if e['type'] == 'member' and e['member']['kind'] == 'agent'}
+pushed = {e['by'] for e in log if e['type'] == 'push' and e['ok'] and e['ref'] == 'refs/heads/main'}
+sys.exit(not agents <= pushed)"
 }
-score() {  # tools/score.py on the run's export
-  rm -rf "${data:?}/export" &&
-    swarmory export "$run" "$data/export" > /dev/null &&
-    "$PY" tools/score.py tests/mission "$data/export/$run" 2> /dev/null | awk '/^score:/{s=$2} END{print s}'
-}
-cleanup() {
+cleanup() {  # a stopped run's workers outlive a killed server, so a local run's are killed here too
   [ -n "$run" ] && swarmory stop "$run" > /dev/null 2>&1
+  for f in "$data/workers/$run"+*.json; do [ -n "$run" ] && [ -f "$f" ] && kill -- "-$(pid "$f")" 2> /dev/null; done
   [ -n "$server" ] && kill "$server" 2> /dev/null
 }
 trap cleanup EXIT
+trap "exit 1" INT TERM  # a stopped test stops its run too
 
 say "swarmory ${args[*]}"
 swarmory "${args[@]}" > "$data/start.log" 2>&1 || { cat "$data/start.log"; say "FAIL: start failed"; exit 1; }
 run=$(awk '/^run /{sub(":", "", $2); print $2; exit}' "$data/start.log")
 [ -n "$run" ] || { cat "$data/start.log"; say "FAIL: no run in start's output"; exit 1; }
 say "run $run (data: $data)"
-deadline=$(($(date +%s) + 1440)) killed_ada=0 killed_server=0 score="" mark=0 ada=0 all=0
+deadline=$(($(date +%s) + 1440)) killed_ada=0 killed_server=0 result="" mark=0 ada=0 all=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 2
   st=$(status)
@@ -160,18 +161,16 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     [ "$before" = "$after" ] || { say "FAIL: the restarted server started running workers again: $after"; break; }
     continue
   fi
-  # Score only once both are back and have worked since: the restarted ada has made a model call, and someone has
+  # Check only once both are back and have worked since: the restarted ada has made a model call, and someone has
   # made one through the restarted server.
   r=$(restored)
   [ "$r" = 0 ] && tail -n "+$((mark + 1))" "$(home)/agent.log" && say "FAIL: ada did not resume" && break
   [ "$r" = 1 ] || continue
   work "test -f e2e-kept" || { say "FAIL: ada's restart lost her work tree"; break; }
   [ "$(calls ada "$st")" -gt "$ada" ] && [ "$(calls "" "$st")" -gt "$all" ] || continue
-  score=$(score)
-  say "score ${score:-none}"
-  [ "$score" = 1.0 ] && break
+  pushed && result=pass && break
 done
-[ "$score" = 1.0 ] && ! watched && say "FAIL: the watch link shows nothing" && score=""
+[ "$result" = pass ] || [ "$(date +%s)" -lt "$deadline" ] || say "FAIL: not every agent pushed to main by the deadline"
 status
 groups=$([ $modal = 1 ] || for f in "$data/workers/$run"+*.json; do [ -f "$f" ] && pid "$f"; done)
 stopped=$run
@@ -181,14 +180,14 @@ if [ $modal = 1 ]; then  # no sandbox of the run is left
   left=$(uv run -q --with modal==1.6.3 python -c "import modal, sys
 app = modal.App.lookup('swarmory-workers')
 print(sum(sb.poll() is None for sb in modal.Sandbox.list(app_id=app.app_id, tags={'run': sys.argv[1]})))" "$stopped")
-  [ "$left" = 0 ] || { say "FAIL: $left sandboxes outlived the run"; score=""; }
+  [ "$left" = 0 ] || { say "FAIL: $left sandboxes outlived the run"; result=""; }
 else  # a member's token is dead once its run is stopped
   SWARMORY_LOGIN="$data/runs/$stopped/members/ada/home/.swarmory/login" swarmory me > /dev/null 2>&1 &&
-    say "FAIL: ada's token still works after stop" && score=""
+    say "FAIL: ada's token still works after stop" && result=""
 fi
 for g in $groups; do  # nothing of a local run may outlive it
-  ps -A -o pgid= | grep -qx " *$g" && say "FAIL: process group $g outlived the run" && score=""
+  ps -A -o pgid= | grep -qx " *$g" && say "FAIL: process group $g outlived the run" && result=""
 done
-[ "$score" = 1.0 ] && say "PASS: score 1.0" && exit 0
-say "FAIL: score ${score:-none} (data: $data)"
+[ "$result" = pass ] && say "PASS" && exit 0
+say "FAIL (data: $data)"
 exit 1

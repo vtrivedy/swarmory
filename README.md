@@ -17,7 +17,8 @@
 
 ## Start a run
 
-You need [uv](https://docs.astral.sh/uv/), git, and the `claude` or `codex` command.
+You need [uv](https://docs.astral.sh/uv/), git, and the command of each coding agent you use: `claude`, `codex`, `agy`
+or `pi`. Deep Agents needs only uv.
 
 ```sh
 uv tool install git+https://github.com/vtrivedy/swarmory
@@ -32,12 +33,19 @@ swarmory start MISSION --team claude-code=3 --hours 1
 Each `--team` is `HARNESS[:MODEL]=COUNT`. Repeat it to mix agents.
 
 ```sh
-swarmory start MISSION --team claude-code:claude-sonnet-5-5=10 --team codex:gpt-6.1-sol=10 --team codex:gemini/gemini-4-argon=10
+swarmory start MISSION --team claude-code:claude-sonnet-5-5=4 --team codex:gpt-6.1-sol=4 --team pi:openai/gpt-6-luna=4
 ```
 
-- **Harness:** `claude-code` or `codex`.
-- **Model:** any model [LiteLLM](https://github.com/BerriAI/litellm) lists prices for. The server needs that provider's key in `<PROVIDER>_API_KEY`.
-- **Count:** any number.
+| Harness | Coding agent | Model |
+|---|---|---|
+| `claude-code` | Claude Code (`claude`) | Any model: `claude-sonnet-5-5`, `openai/gpt-6.1-sol` |
+| `codex` | Codex (`codex`) | Any model: `gpt-6.1-sol`, `gemini/gemini-4-argon` |
+| `antigravity` | Google Antigravity (`agy`) | A Gemini model `agy models` lists: `gemini-3.8-flash-low` |
+| `pi` | [pi](https://github.com/badlogic/pi-mono) (`pi`) | `anthropic/...`, `openai/...` or `gemini/...`: `anthropic/claude-sonnet-5-5` |
+| `deepagents` | LangChain's [Deep Agents](https://github.com/langchain-ai/deepagents) SDK, run with uv | `anthropic/...`, `openai/...` or `gemini/...`: `openai/gpt-6-luna` |
+
+The server needs the key of each model's provider in `<PROVIDER>_API_KEY`, and prices calls from
+[LiteLLM](https://github.com/BerriAI/litellm)'s table.
 
 For names, roles, and harness flags, put a `team.toml` in the mission folder instead:
 
@@ -54,6 +62,25 @@ count = 5
 args = ["-c", "model_reasoning_effort=high"]
 ```
 
+To add a coding agent that swarmory doesn't build in, give its team.toml entry the `run` and `resume` commands that
+run it headless. Each must contain `{prompt}`, and swarmory fills in `{prompt}` and `{model}`. Its model names
+`anthropic/...`, `openai/...` or `gemini/...`, and the command must be on the server's PATH. The gateway serves
+Anthropic's Messages API, OpenAI's Responses and Chat Completions APIs, and Gemini's API. The session gets the
+gateway's address and the agent's run token, which the gateway takes in place of a key, in `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY`. The optional
+`setup` command runs in a shell before each session, with the same variables. Use it to write a config file when the
+agent reads none of those variables. Such an agent sees messages only at its next turn, and the viewer shows its output
+as text.
+
+```toml
+[[agent]]
+harness = "my-agent"
+model = "anthropic/claude-sonnet-5-5"
+run = "my-agent --headless --model {model} {prompt}"
+resume = "my-agent --headless --continue --model {model} {prompt}"
+setup = "sh my-agent-config.sh"   # a file of the mission
+```
+
 | Option | What it does |
 |---|---|
 | `--hours H` | How long the run lasts. The default is 3. |
@@ -68,7 +95,7 @@ args = ["-c", "model_reasoning_effort=high"]
   opens with what changed: messages for the agent, unread channels, new commits on main, and the time left.
 - An agent with nothing to do runs `swarmory wait`. Its next turn then starts when a message for it arrives (a DM, a
   reply, an @mention, a comment on an issue it follows, a job's result), or after 4 minutes.
-- Messages for an agent also reach it between its tool calls, through a Claude Code or Codex hook.
+- Messages for a built-in agent also reach it between its tool calls, through a hook.
 
 Swarmory's own prompt states only these facts. How the team should work, such as roles, claiming and review, is the
 mission's call: write it in the mission's BRIEF.md, under "How we work", and give agents roles in `team.toml`.

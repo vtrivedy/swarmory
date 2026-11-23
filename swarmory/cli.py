@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from swarmory import HOURS, PORT, POST_BUFFER, TRACE_MOST
+from swarmory import HOURS, PORT, POST_BUFFER, TRACE_MOST, harness
 
 USAGE = f"""\
 swarmory                                 who you are, what's unread, your issues, the run
@@ -442,12 +442,13 @@ def next_turn():
             time.sleep(5)
 
 
-INBOX_EVERY = 10  # seconds between the hook's asks: it runs after every tool call
+INBOX_EVERY = 10  # seconds between the hook's asks: it runs after every tool call or before every model call
 
 
 def inbox_hook():
-    """Claude Code's PostToolUse hook (harness/claude_code.py): the messages for this agent that came during its turn,
-    as context for the model. It asks the server at most every INBOX_EVERY seconds, and never fails the tool call."""
+    """The hook of a harness that has one (harness/base.py): the messages for this agent that came during its turn,
+    in the answer its harness reads. It asks the server at most every INBOX_EVERY seconds, and never fails the tool
+    call."""
     asked = Path(os.path.dirname(LOGIN)) / "inbox-asked"
     try:
         if time.time() - asked.stat().st_mtime < INBOX_EVERY:
@@ -460,7 +461,7 @@ def inbox_hook():
     except Exception:  # noqa: BLE001: the tool call goes on without messages
         return
     if text:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
+        print(json.dumps(harness.of({"harness": os.environ.get("SWARMORY_HARNESS", "")}).inbox(text)))
 
 
 def login(pos):
@@ -561,7 +562,7 @@ def start_run(mission, team=None, **options) -> dict:
     login for a run of the mission folder, starting a local server first when none answers; pushes the folder to the
     run's repo as main, which starts the agents; and makes the run the login's. `team` is the start verb's, and when
     None the mission's team.toml, else two agents of the first harness. `options` are the verb's other parameters."""
-    from swarmory import harness, seed
+    from swarmory import seed
     mission = Path(mission).resolve()
     if not (mission / "BRIEF.md").is_file():
         fail("%s is not a mission: it has no BRIEF.md" % mission)
@@ -597,7 +598,6 @@ def start_run(mission, team=None, **options) -> dict:
 
 
 def start(argv):
-    from swarmory import harness
     names = ", ".join(h.name for h in harness.HARNESSES)
     p = argparse.ArgumentParser(prog="swarmory start", description="Starts a run of a mission: a team of coding "
                                 "agents, until its hours are up or `swarmory stop`. It pushes the mission folder to "

@@ -4,14 +4,14 @@
 
 GET /health and POST /api/<verb> (start, runs, status, stop) are the server's. Each run is under
 /r/RUN: its verbs (/api/<verb>), its git remote (/git/work.git/..., which logs each push), its model gateway
-(/llm/anthropic/..., /llm/openai/...), shared files (/files), agents' traces (/trace), a job's input (/job/input), the
-viewer (/view, which polls /feed, /commits, /commit and /trace) and the run's records (/export). verbs.py holds the
-verbs, runs.py the runs, supervisor.py the loop that keeps their workers.
+(/llm/anthropic/..., /llm/openai/..., /llm/gemini/...), shared files (/files), agents' traces (/trace), a job's input
+(/job/input), the viewer (/view, which polls /feed, /commits, /commit and /trace) and the run's records (/export).
+verbs.py holds the verbs, runs.py the runs, supervisor.py the loop that keeps their workers.
 
-A token comes as a Bearer, an x-api-key or git's Basic-auth password. The operator token is the server's, from
-SWARMORY_OPERATOR_TOKEN in its environment. Every route and every verb names one action, and policy.py's one table says
-which kinds of token (operator, member, job, spend, view) may do it. The model keys are in this process's environment
-(proxy.py) and are never passed on, not even to git or a worker."""
+A token comes as a Bearer, an x-api-key, an x-goog-api-key or git's Basic-auth password. The operator token is the
+server's, from SWARMORY_OPERATOR_TOKEN in its environment. Every route and every verb names one action, and policy.py's
+one table says which kinds of token (operator, member, job, spend, view) may do it. The model keys are in this
+process's environment (proxy.py) and are never passed on, not even to git or a worker."""
 import argparse
 import base64
 import hashlib
@@ -38,7 +38,7 @@ from swarmory import PORT, POST_BUFFER, TRACE_MOST
 from .jobs import TOKENS, git
 from .litellm import LiteLLM, install
 from .policy import OWN, TABLE, Denied, Principal, authorize, sha
-from .proxy import length
+from .proxy import KEY_HEADER, length
 from .runs import SESSION, Runs
 from .supervisor import RESTART, TICK, Supervisor
 from .team import NotFound
@@ -110,14 +110,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def token(self) -> str:
-        """The token this request carries: Bearer, x-api-key, or a Basic-auth password (git's)."""
+        """The token this request carries: Bearer, x-api-key, x-goog-api-key (Gemini's), or a Basic-auth password
+        (git's)."""
         auth = self.headers.get("Authorization", "")
         if auth.startswith("Basic "):
             try:
                 return base64.b64decode(auth[6:]).decode().partition(":")[2].strip()
             except ValueError:
                 return ""
-        return (self.headers.get("x-api-key") or (auth[7:] if auth.startswith("Bearer ") else "")).strip()
+        return (self.headers.get("x-api-key") or self.headers.get("x-goog-api-key")
+                or (auth[7:] if auth.startswith("Bearer ") else "")).strip()
 
     def principal(self):
         """Whose token came with this request (policy.Principal), or None: an empty or unknown token is no one's. The
@@ -351,8 +353,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def llm(self, rest: str):
         provider, _, rest = rest.partition("/")
-        if provider not in ("anthropic", "openai"):
-            return self.answer(404, {"error": "the model gateway serves /llm/anthropic/... and /llm/openai/..."})
+        if provider not in KEY_HEADER:
+            return self.answer(404, {"error": "the model gateway serves /llm/anthropic/..., /llm/openai/... and "
+                                              "/llm/gemini/..."})
         who, job = self.principal(), None
         try:
             authorize(who, "llm")

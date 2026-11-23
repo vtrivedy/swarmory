@@ -33,7 +33,7 @@ import modal
 
 from swarmory import PORT, harbor
 from swarmory.backends.base import WorkerSpec
-from swarmory.harness import HARNESSES, named
+from swarmory.harness import HARNESSES, of
 
 APP, WORKERS = "swarmory", "swarmory-workers"
 AGENT_IMAGE, JOB_IMAGE = "SWARMORY_AGENT_IMAGE", "SWARMORY_JOB_IMAGE"
@@ -110,7 +110,8 @@ class Modal:
             more["outbound_domain_allowlist"] = list(spec.allow_hosts)
         if spec.role == "agent":  # its log and its HOME are in its folder of the Volume
             command = ("bash", "-c", f"mkdir -p {MOUNT}/home && exec {shlex.join(command)} >> {MOUNT}/agent.log 2>&1")
-            env.update(named(spec.env["SWARMORY_HARNESS"]).sandboxed, SWARMORY_DIR=MOUNT, HOME=f"{MOUNT}/home")
+            env.update(of({"harness": spec.env["SWARMORY_HARNESS"]}).sandboxed, SWARMORY_DIR=MOUNT,
+                       HOME=f"{MOUNT}/home")
             more.update(AGENT_SIZE, volumes={MOUNT: volume.with_mount_options(sub_path=spec.home)})
         secrets = spec.grants if spec.role == "agent" else (JOB_SECRET,)
         modal.Sandbox.create(*command, app=self.app, image=modal.Image.from_id(self.images[spec.role]), env=env,

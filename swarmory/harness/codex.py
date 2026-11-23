@@ -3,7 +3,7 @@ import base64
 import json
 from pathlib import Path
 
-from .base import INBOX, Endpoint, Login, cut, other, records, short, text_of
+from .base import INBOX, context, Endpoint, Login, cut, other, records, short, text_of
 
 
 class Codex:
@@ -15,6 +15,7 @@ class Codex:
     login_from = "Codex's ~/.codex/auth.json from a ChatGPT login, which any codex command refreshes"
     home = ".codex"
     conversations = "sessions"
+    hooks = True
     sandboxed = {}
 
     def env(self, llm: Endpoint) -> dict:
@@ -29,6 +30,9 @@ class Codex:
                           f'base_url = "{llm.url}/openai/v1"\nenv_key = "SWARMORY_TOKEN"\nwire_api = "responses"\n'
                           "supports_websockets = false\n")
         (config.parent / "hooks.json").write_text(json.dumps({"hooks": INBOX}) + "\n")
+
+    def inbox(self, text: str) -> dict:
+        return context(text)
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "exec", *(["resume", "--last"] if resume else []), "--json", "--skip-git-repo-check",

@@ -1,7 +1,7 @@
 """The seed: a mission folder pushed to a new run as the first commit on main, which is what starts its agents. The
 client does this after `start`, from the machine that has the mission, with the operator token. Symlinks are copied as
-files, and what withheld() names never reaches the team: secrets, links out of the mission folder, a .git, the
-mission's top-level score.py (the hidden grader), and what the mission's own .gitignore ignores."""
+files, and what withheld() names never reaches the team: secrets, links out of the mission folder, a .git, and what
+the mission's own .gitignore ignores."""
 import fnmatch
 import os
 import shutil
@@ -31,10 +31,8 @@ def private(mission: Path, rel: Path) -> bool:
 
 
 def withheld(mission: Path, rel: Path) -> bool:
-    """rel, in the mission folder, never reaches the team: a .git, a __pycache__, the top-level score.py (the hidden
-    grader) or a link to it, or what private() names."""
-    grader = rel == Path("score.py") or (mission / rel).resolve() == mission / "score.py"
-    return bool({".git", "__pycache__"} & set(rel.parts)) or grader or private(mission, rel)
+    """rel, in the mission folder, never reaches the team: a .git, a __pycache__, or what private() names."""
+    return bool({".git", "__pycache__"} & set(rel.parts)) or private(mission, rel)
 
 
 def make_seed(mission, url: str, token: str):

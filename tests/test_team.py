@@ -108,12 +108,12 @@ def test_each_push_is_logged_accepted_or_refused_and_main_cannot_be_rewritten_or
          "reason": "deletion prohibited"}]
 
 
-def test_the_seed_is_the_mission_less_the_grader_its_secrets_and_what_its_gitignore_ignores(serve, tmp_path):
+def test_the_seed_is_the_mission_less_its_secrets_and_what_its_gitignore_ignores(serve, tmp_path):
     served = serve()
     run = served.start(seed=False)
     mission = tmp_path / "m"
     (mission / "lib").mkdir(parents=True)
-    for rel in ("BRIEF.md", "score.py", "lib/score.py", ".env", "lib/a.pem", "build.log", "lib/x.py"):
+    for rel in ("BRIEF.md", "check.sh", ".env", "lib/a.pem", "build.log", "lib/x.py"):
         (mission / rel).write_text("x")
     (mission / ".gitignore").write_text("*.log\n")
     (tmp_path / "outside").write_text("x")
@@ -125,7 +125,7 @@ def test_the_seed_is_the_mission_less_the_grader_its_secrets_and_what_its_gitign
     subprocess.run(["git", "clone", "-q", remote, str(work)], check=True, capture_output=True)
     skill = sorted("skill/" + str(f.relative_to(seed.HERE / "skills" / "swarmory"))
                    for f in (seed.HERE / "skills" / "swarmory").rglob("*") if f.is_file())
-    assert sorted(git_in(work, "ls-files").split()) == [".gitignore", "BRIEF.md", "lib/score.py", "lib/x.py", *skill]
+    assert sorted(git_in(work, "ls-files").split()) == [".gitignore", "BRIEF.md", "check.sh", "lib/x.py", *skill]
     assert "skill/SKILL.md" in skill
 
 

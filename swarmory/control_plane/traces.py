@@ -70,7 +70,7 @@ def masker(env, hashes) -> Masker:
     """A Masker for a run: the values of its environment's keys, tokens, secrets and logins (the strings inside a login
     that is JSON too), and `hashes`, the digests of every token the run has had."""
     values = [v for k, v in env.items() if re.search(r"KEY|TOKEN|SECRET|PASSWORD|AUTH", k)]
-    for h in harness.HARNESSES:  # a login that is a JSON file: every string in it
+    for h in (h for h in harness.HARNESSES if h.login):  # a login that is a JSON file: every string in it
         try:
             values += strings(json.loads(env.get(h.login) or "{}"))
         except ValueError:
@@ -100,7 +100,7 @@ def events(raw: bytes, arrivals: list, mask) -> list:
     """The events of one session file. `arrivals` is [(offset, time)] for each chunk the server received, in
     order: an event's `at` is when the chunk holding its line's end arrived. A last line without its newline isn't read
     yet. The file's first line is agent.py's start line, which names the harness that parses the rest: a file without
-    one has no events, and one whose harness this server does not know has only agent.py's start and end."""
+    one has no events, and one whose harness is not built in (a Command) has its output as text."""
     out, starts, whole = [], [o for o, _ in arrivals], raw.split(b"\n")[:-1]
     marks = [mark(line) for line in whole]
     now = [None]  # `at` of the line being read
@@ -122,12 +122,7 @@ def events(raw: bytes, arrivals: list, mask) -> list:
 
     if not (marks and marks[0] and marks[0].get("event") == "start"):
         return []
-    try:
-        parse = harness.named(marks[0].get("harness")).parse
-    except KeyError:
-        def parse(lines):  # reads past the harness's lines, which leaves agent.py's two
-            return [ev for _ in lines for ev in ()]
-    for ev in parse(own()):
+    for ev in harness.of({"harness": marks[0].get("harness")}).parse(own()):
         out.append({**ev, "at": now[0]})
     return [masked(ev, mask) for ev in out]
 

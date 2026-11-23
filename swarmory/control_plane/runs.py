@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from swarmory import harness
+from swarmory.harness.base import APIS
 
 from . import traces
 from .jobs import Jobs, git, limits
@@ -312,14 +313,24 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
         raise ValueError("grant and allow are lists of names, me a name and jobs true or false")
     if not isinstance(team, list) or not team:
         raise ValueError("A team is a list of at least one agent.")
+    built_in, command = [h.name for h in harness.HARNESSES], harness.COMMAND_FIELDS
     for n, m in enumerate(team, 1):
-        known = isinstance(m, dict) and m.get("harness") in [h.name for h in harness.HARNESSES]
-        if (not known or m.keys() - {"harness", "model", "role", "name", "args"}
-                or not all(isinstance(m.get(k) or "", str) for k in ("model", "role", "name"))
+        if (not isinstance(m, dict) or not isinstance(m.get("harness"), str)
+                or m.keys() - {"harness", "model", "role", "name", "args", *command}
+                or not all(isinstance(m.get(k) or "", str) for k in ("model", "role", "name", *command))
                 or not isinstance(m.get("args") or [], list)
                 or not all(isinstance(a, str) and "\n" not in a for a in m.get("args") or [])):
-            raise ValueError(f"team entry {n}: want harness {' or '.join(h.name for h in harness.HARNESSES)}, and "
-                             "only model, role, name and args (a list of one-line strings).")
+            raise ValueError(f"team entry {n}: want a harness, and only model, role, name, args (a list of one-line "
+                             f"strings), and for a harness other than {' or '.join(built_in)}: {', '.join(command)}.")
+        if m["harness"] in built_in and m.keys() & set(command):
+            raise ValueError(f"team entry {n}: {m['harness']} is built in, so it takes no {', '.join(command)}.")
+        if m["harness"] not in built_in and not all("{prompt}" in (m.get(k) or "") for k in ("run", "resume")):
+            raise ValueError(f"team entry {n}: {m['harness']} is not built in ({', '.join(built_in)}), so it needs "
+                             "run and resume, each a command with {prompt} in it.")
+        model = m.get("model") or ""
+        if harness.of(m).provider is None and (model.partition("/")[0] not in APIS or not owner(model)):
+            raise ValueError(f"team entry {n}: {m['harness']} needs a model the gateway knows, named with its "
+                             f"provider ({', '.join(APIS)}), such as anthropic/claude-sonnet-5-5.")
     line = lambda m, k: " ".join((m.get(k) or "").split()) or None  # noqa: E731
     named = [line(m, "name") and re.sub(r"[^a-z0-9-]", "", line(m, "name").lower()) for m in team]
     op = re.sub(r"[^a-z]", "", me.lower())  # the operator keeps their own name: no agent is given it by default
@@ -335,15 +346,17 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
     if not op or op in ids or op in RESERVED:
         raise ValueError(f"Your id {op!r} is empty or taken (agents: {', '.join(ids)}). "
                          "It comes from your git user.name.")
-    used = [h for h in harness.HARNESSES if any(m["harness"] == h.name for m in team)]
+    used = list({m["harness"]: harness.of(m) for m in team}.values())
     backend.check(used, grants, allow)
     for h in used if subscription else ():
+        if not h.login:
+            raise ValueError(f"The team has {h.name} agents, which take no subscription login: run without it.")
         login = env.get(h.login) and h.signin(env[h.login])
         if not login or (login.expires or float("inf")) < time.time() + hours * 3600:
             raise ValueError(f"The team has {h.name} agents, so the server's {h.login} must be {h.login_from}, good "
                              "until the run ends.")
     for m in () if subscription else team:  # else every model call of that agent's fails with the gateway's 503
-        key = f"{(owner(m.get('model') or None) or harness.named(m['harness']).provider).upper()}_API_KEY"
+        key = f"{(owner(m.get('model') or None) or harness.of(m).provider).upper()}_API_KEY"
         if not env.get(key):
             raise ValueError(f"The {m['harness']} agent on {m.get('model') or 'its default model'} needs {key}, which "
                              "the server's environment does not have.")
@@ -352,7 +365,8 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
           f"{secrets.token_hex(2)}"
     view = view_token(operator, rid)
     members = [{"id": i, "name": line(m, "name") or i.title(), "harness": m["harness"], "model": m.get("model") or None,
-                "role": line(m, "role"), "args": m.get("args") or [], "kind": "agent"} for i, m in zip(ids, team)]
+                "role": line(m, "role"), "args": m.get("args") or [], "kind": "agent",
+                **{k: m[k] for k in harness.COMMAND_FIELDS if m.get(k)}} for i, m in zip(ids, team)]
     members.append({"id": op, "name": op.title(), "kind": "human", "operator": True})
     return {"run": rid, "mission": mission, "created": now, "deadline": int(now + hours * 3600), "members": members,
             "operator": op, "view_sha256": sha(view), "channels": [{"id": "general", "about": "The whole team."}],

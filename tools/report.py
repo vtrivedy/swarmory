@@ -13,8 +13,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from swarmory import harness
 from swarmory.cli import git
+from swarmory.harness.claude_code import ClaudeCode
+from swarmory.harness.codex import Codex
+
+REPORTERS = {h.name: h for h in (ClaudeCode(), Codex())}  # the harnesses that have once()
 
 
 def records(run: Path) -> Path:
@@ -57,7 +60,7 @@ def report(run: Path, name: str, model) -> Path:
     page.unlink(missing_ok=True)
     prompt = string.Template(Path(__file__).with_name("report.md").read_text()).substitute(
         run=run.name, records=folder, report=page)
-    cmd = harness.named(name).once(prompt, model, str(folder))
+    cmd = REPORTERS[name].once(prompt, model, str(folder))
     if not shutil.which(cmd[0]):
         sys.exit(f"There is no `{cmd[0]}` on your PATH.")
     print(f"Writing the report with {name} from {folder} (its output: {run / 'report.log'})...", flush=True)
@@ -69,7 +72,7 @@ def report(run: Path, name: str, model) -> Path:
 
 
 def main():
-    names = [h.name for h in harness.HARNESSES]
+    names = list(REPORTERS)
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("run", type=Path, help="a run's export, unpacked")
     p.add_argument("--harness", choices=names, default=names[0], help=f"the coding agent (default {names[0]})")

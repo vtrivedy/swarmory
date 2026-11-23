@@ -8,8 +8,10 @@ from test_team import make
 
 from swarmory import cli
 from swarmory.control_plane import team as team_
+from swarmory.harness.antigravity import Antigravity
 from swarmory.harness.claude_code import ClaudeCode
 from swarmory.harness.codex import Codex
+from swarmory.harness.pi import Pi
 from swarmory.worker import agent
 
 
@@ -91,20 +93,59 @@ def test_a_spent_budget_holds_the_agent_until_a_message_and_keeps_its_conversati
     assert a.run.asked == ["wait", "next", "next"] and prompts[1].startswith("Since your last turn:")
 
 
-def test_both_harnesses_get_messages_between_tool_calls_through_one_hook(tmp_path, monkeypatch, capsys):
+def test_a_command_agent_resumes_only_after_a_session_that_succeeded(monkeypatch, tmp_path):
+    for k, v in dict(SWARMORY_HARNESS="aider", SWARMORY_RUN="aider -m {prompt}", SWARMORY_SETUP="",
+                     SWARMORY_RESUME="aider --restore-chat-history -m {prompt}", SWARMORY_DIR=str(tmp_path),
+                     SWARMORY_PROMPT="the mission", SWARMORY_URL="http://x", SWARMORY_TOKEN="t", SWARMORY_MODEL="",
+                     SWARMORY_ARGS="").items():
+        monkeypatch.setenv(k, v)
+    a = agent.Agent()
+    a.sessions.mkdir()
+    a.upload = lambda sync: None
+    exits, cmds = [127, 0, 0, 0], []  # its first session fails: say `aider` is not installed yet
+
+    def run(cmd, **_):
+        cmds.append(cmd)
+        return exits[len(cmds) - 1], ""
+
+    a.run = run
+    for i in range(4):
+        a.session("carry on", a.set_aside(2, 1) if i == 3 else "")
+    assert [c[:2] for c in cmds] == [["aider", "-m"], ["aider", "-m"], ["aider", "--restore-chat-history"],
+                                     ["aider", "-m"]]
+    assert [c[-1].split("\n")[0] for c in cmds] == ["the mission", "the mission", "carry on", "the mission"]
+
+
+def test_every_harness_with_a_hook_gets_messages_mid_turn_in_its_own_answer(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     ClaudeCode().prepare(str(tmp_path / "work"), None)
     Codex().prepare(str(tmp_path / "work"), type("Endpoint", (), {"url": "http://x"})())
-    for f in (".claude/settings.json", ".codex/hooks.json"):
-        hook = json.loads((tmp_path / f).read_text())["hooks"]["PostToolUse"][0]
-        assert hook["hooks"][0]["command"] == "swarmory inbox --hook", f
+    Antigravity().prepare(str(tmp_path / "work"), None)
+    monkeypatch.setenv("SWARMORY_MODEL", "anthropic/claude-haiku-5-5")
+    Pi().prepare(str(tmp_path / "work"), type("Endpoint", (), {"url": "http://x"})())
+    for f, event in ((".claude/settings.json", "PostToolUse"), (".codex/hooks.json", "PostToolUse"),
+                     (".gemini/config/hooks.json", "PreInvocation")):
+        hooks = json.loads((tmp_path / f).read_text())
+        hook = (hooks["hooks"][event][0]["hooks"] if "hooks" in hooks else hooks["swarmory"][event])[0]
+        assert hook["command"] == "swarmory inbox --hook", f
+    assert '"swarmory", ["inbox", "--hook"]' in (tmp_path / ".pi/agent/extensions/swarmory.ts").read_text()
     assert "--dangerously-bypass-hook-trust" in Codex().command("go", True, None, [])  # Codex runs it unreviewed
     monkeypatch.setattr(cli, "LOGIN", str(tmp_path / ".swarmory" / "login"))
     (tmp_path / ".swarmory").mkdir()
     asked = []
     monkeypatch.setattr(cli, "post", lambda verb, body, timeout: asked.append(verb) or {"text": "[swarmory] ada: hi"})
+    monkeypatch.setenv("SWARMORY_HARNESS", "claude-code")
     cli.inbox_hook()
     said = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert said == {"hookEventName": "PostToolUse", "additionalContext": "[swarmory] ada: hi"}
     cli.inbox_hook()  # the next tool call, within INBOX_EVERY: no request
     assert asked == ["inbox"] and capsys.readouterr().out == ""
+    (tmp_path / ".swarmory" / "inbox-asked").unlink()
+    monkeypatch.setenv("SWARMORY_HARNESS", "antigravity")
+    cli.inbox_hook()
+    assert json.loads(capsys.readouterr().out) == {"injectSteps": [{"systemMessage": {"systemMessage":
+                                                                                      "[swarmory] ada: hi"}}]}
+    (tmp_path / ".swarmory" / "inbox-asked").unlink()
+    monkeypatch.setenv("SWARMORY_HARNESS", "pi")
+    cli.inbox_hook()
+    assert json.loads(capsys.readouterr().out) == {"text": "[swarmory] ada: hi"}

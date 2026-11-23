@@ -24,6 +24,7 @@ class Fake:
     home = ".fake"
     conversations = "talks"
     sandboxed = {}
+    hooks = False
 
     def env(self, llm: Endpoint) -> dict:
         return {}
@@ -33,9 +34,6 @@ class Fake:
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "resume" if resume else "new", prompt, *args]
-
-    def once(self, prompt: str, model: str | None, folder: str) -> list:
-        return [self.cli, "new", prompt]
 
     def signin(self, login: str) -> Login | None:
         return None

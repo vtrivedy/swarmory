@@ -44,12 +44,15 @@ def nap(seconds: float):
 
 class Agent:
     def __init__(self):
-        self.harness = harness.named(ENV["SWARMORY_HARNESS"])
+        self.harness = harness.of({"harness": ENV["SWARMORY_HARNESS"],
+                                   **{k: ENV.get(f"SWARMORY_{k.upper()}") for k in harness.COMMAND_FIELDS}})
         self.dir = Path(ENV["SWARMORY_DIR"])  # its folder in the run, which outlives a restart and holds its HOME
         self.work = str(self.dir / "work")
         self.prompt = ENV["SWARMORY_PROMPT"].replace("$work", self.work)  # the server can't know where the clone is
         self.sessions = self.dir / "sessions"
-        self.conversations = Path.home() / self.harness.home / self.harness.conversations
+        self.resumable = self.dir / "resumable"  # for a harness that names no conversations folder: see started()
+        self.conversations = self.harness.conversations and Path.home() / self.harness.home / \
+            self.harness.conversations
         self.model = ENV.get("SWARMORY_MODEL") or None
         self.args = [a for a in ENV.get("SWARMORY_ARGS", "").split("\n") if a]  # team.toml's args, one per line
         self.running = None  # the command run() waits on
@@ -71,8 +74,11 @@ class Agent:
         return (p.returncode if p.returncode >= 0 else 128 - p.returncode), out or ""
 
     def started(self) -> bool:
-        """The harness has a conversation to resume."""
-        return any(self.conversations.rglob("*.jsonl"))
+        """The harness has a conversation to resume: one in its conversations folder, or, when it names none, a
+        session ended with status 0 since its last fresh start."""
+        if self.conversations:
+            return any(p.is_file() for p in self.conversations.rglob("*"))
+        return self.resumable.exists()
 
     def count(self) -> int:
         return len(list(self.sessions.glob("session-*.jsonl")))
@@ -133,6 +139,8 @@ class Agent:
             # not the worker's PYTHONPATH, which is for its own imports: the session's `swarmory` sets its own
             env = {k: v for k, v in {**ENV, **self.harness.env(llm)}.items() if k != "PYTHONPATH"}
             status, _ = self.run(cmd, env=env, stdout=out, stderr=errors)
+        if status == 0 and not self.conversations:
+            self.resumable.touch()
         with open(err, "rb") as f:
             f.seek(max(0, err.stat().st_size - 2000))
             self.mark(file, "end", status=status, stderr=f.read().decode(errors="replace") if status else "")
@@ -141,10 +149,14 @@ class Agent:
         return status
 
     def set_aside(self, fails: int, last: int) -> str:
-        """A conversation that keeps failing (a provider refusal sticks to it) is moved out of the harness's home, so
-        the next session starts a fresh one. Returns what that one is told."""
+        """A conversation that keeps failing (a provider refusal sticks to it) is moved out of the harness's home, or
+        for a harness without a conversations folder is no longer resumed, so the next session starts a fresh one.
+        Returns what that one is told."""
         try:
-            self.conversations.rename(self.dir / f"{self.conversations.name}.failed-{int(time.time())}")
+            if self.conversations:
+                self.conversations.rename(self.dir / f"{self.conversations.name}.failed-{int(time.time())}")
+            else:
+                self.resumable.unlink(missing_ok=True)
             say(f"starting a fresh conversation after {fails} failed sessions")
         except OSError:
             pass

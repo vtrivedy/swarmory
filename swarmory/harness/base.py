@@ -13,7 +13,7 @@ LONG = 6000  # characters of one text field kept; the rest is cut, with a count 
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)")
 
 # After each tool call, messages for the agent that came meanwhile, as context. Claude Code and Codex take the same
-# hook, and `swarmory inbox --hook` prints the answer both read.
+# hook and read the same answer, context(); `swarmory inbox --hook` prints the answer of the agent's own harness.
 INBOX = {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "swarmory inbox --hook",
                                                       "timeout": 15}]}]}
 
@@ -34,31 +34,35 @@ class Login:
 
 
 class Harness(Protocol):
+    """What every harness has. Claude Code and Codex also have once(prompt, model, folder), which tools/report.py runs:
+    one session as the person, with their own login, in `folder`, that reads no instruction files from the folders
+    above it."""
     name: str  # what a team names it by, in --team and team.toml
     cli: str  # its executable
     install: tuple[str, ...]  # the commands that install it in the agents' image, which has Node
-    provider: str  # the gateway route it calls: "anthropic" or "openai"
-    login: str  # the variable that holds a subscription login
+    provider: str | None  # the gateway route it calls, one of APIS; None when its model names it
+    login: str | None  # the variable that holds a subscription login; None when it takes none
     login_from: str  # what that variable holds, for the message that asks for it
     home: str  # the folder under HOME it keeps its state in, which lives in the agent's folder and so outlives its
                # machine
-    conversations: str  # the folder in `home` with its conversations: one there means a session can resume
+    conversations: str | None  # the folder in `home` with its conversations: one there means a session can resume.
+                               # None: it resumes after a session that ended with status 0 since its last fresh start
     sandboxed: dict[str, str]  # its environment in a sandbox that is itself the boundary
+    hooks: bool  # it runs `swarmory inbox --hook` mid-turn, so messages reach the agent then
 
     def env(self, llm: Endpoint) -> dict[str, str]:
         """The environment of a session whose model calls go to `llm`."""
 
     def prepare(self, work: str, llm: Endpoint) -> None:
-        """Writes the config files a session in the folder `work` needs: the gateway, and INBOX, the hook that
-        delivers messages between tool calls. Called before each session."""
+        """Writes the config files a session in the folder `work` needs: the gateway, and the hook that delivers
+        messages between tool calls, when the harness has one. Called before each session."""
+
+    def inbox(self, text: str) -> dict:
+        """The answer its hook prints to give the agent `text`, the messages that came during its turn."""
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list[str]) -> list[str]:
         """One headless session that prints its events as lines of JSON: `resume` carries on its last conversation,
         and `args` are a team's own extra arguments."""
-
-    def once(self, prompt: str, model: str | None, folder: str) -> list[str]:
-        """One session as the person, with their own login, in `folder`, that reads no instruction files from the
-        folders above it."""
 
     def signin(self, login: str) -> Login | None:
         """The login the variable `login` held, or None if it isn't one."""
@@ -66,6 +70,22 @@ class Harness(Protocol):
     def parse(self, lines: Iterable[str]) -> Iterator[dict]:
         """The events of a session's output, in the shape control_plane/traces.py describes. It yields a line's events
         before it reads the next line, so the caller knows which line each came from."""
+
+
+APIS = ("anthropic", "openai", "gemini")  # the APIs the gateway serves, and so the providers a model can name
+
+
+def gateway(llm: Endpoint) -> dict:
+    """The gateway as each of APIS, in the variables their SDKs read: for a harness whose model names its
+    provider."""
+    return {"ANTHROPIC_BASE_URL": f"{llm.url}/anthropic", "ANTHROPIC_API_KEY": llm.token,
+            "OPENAI_BASE_URL": f"{llm.url}/openai/v1", "OPENAI_API_KEY": llm.token,
+            "GOOGLE_GEMINI_BASE_URL": f"{llm.url}/gemini", "GEMINI_API_KEY": llm.token}
+
+
+def context(text: str) -> dict:
+    """The answer to INBOX that gives the model `text` as context."""
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}
 
 
 def records(lines: Iterable[str]) -> Iterator[dict]:

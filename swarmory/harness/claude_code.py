@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from .base import INBOX, Endpoint, Login, cut, other, records, short, text_of
+from .base import INBOX, context, Endpoint, Login, cut, other, records, short, text_of
 
 DOCS = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", ".claude/rules/**")  # instructions it reads on its own
 
@@ -17,6 +17,7 @@ class ClaudeCode:
     login_from = "the token `claude setup-token` prints"
     home = ".claude"
     conversations = "projects"
+    hooks = True
     sandboxed = {"IS_SANDBOX": "1",  # lets it skip its permission prompts as root
                  "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1",
                  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
@@ -32,6 +33,9 @@ class ClaudeCode:
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps({"claudeMdExcludes": [str(d / f) for d in above for f in DOCS],
                                         "hooks": INBOX}) + "\n")
+
+    def inbox(self, text: str) -> dict:
+        return context(text)
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "-p", *(["--continue"] if resume else []), prompt, "--output-format", "stream-json",
@@ -78,6 +82,9 @@ def event(e: dict, out: list, last: dict):
                     "text": cut(e.get("summary") or e.get("description") or "", 400)})
     elif t == "system" and sub == "vcs_state_changed":
         out.append({"kind": "note", "text": f"git {e.get('kind') or 'changed'}"})
+    elif t == "system" and sub == "api_retry":
+        out.append({"kind": "warn", "text": f"model call retried (attempt {e.get('attempt')} of "
+                                            f"{e.get('max_retries')}): {e.get('error_status') or e.get('error')}"})
     elif t == "system" and sub in ("background_tasks_changed", "status", "hook_started", "hook_response"):
         pass  # a list of tasks the task events already gave, or harness bookkeeping
     elif t == "assistant":

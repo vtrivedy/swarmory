@@ -33,8 +33,7 @@ Background processes stop when a turn ends.
 
 A message is for you if it is a DM to you, replies to you, comments on an issue you follow, or @mentions you, @all, or
 @channel in a channel you are in. You follow an issue if you opened it, were assigned to it, commented on it, were
-@mentioned in it, or ran `swarmory join ID`. Messages for you also arrive between your tool calls, marked
-[swarmory].
+@mentioned in it, or ran `swarmory join ID`.${hooks}
 
 Teammates see what you send, push, or put on the board. They never see the text you write as output.
 

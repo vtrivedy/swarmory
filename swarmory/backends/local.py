@@ -81,7 +81,9 @@ class Local:
         if spec.role == "agent":  # its HOME is its own, with what it installs there on its PATH, and it gets its grants
             names = spec.grants
             env.update(PATH=f"{self.data / 'bin'}:{home / 'home' / '.local' / 'bin'}:{tools()}", SWARMORY_DIR=str(home),
-                       HOME=str(home / "home"))
+                       HOME=str(home / "home"),
+                       # the person's uv cache, so uv downloads each package once for every agent
+                       UV_CACHE_DIR=os.environ.get("UV_CACHE_DIR") or str(Path.home() / ".cache" / "uv"))
         else:  # a job's worker: the server's HOME, and Harbor's Modal token if the server's environment has it
             names = harbor.MODAL
             env.update(PATH=f"{self.data / 'bin'}:{tools()}", HOME=os.environ.get("HOME", str(home)))
