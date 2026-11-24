@@ -20,8 +20,9 @@
 Install the CLI, and give your coding agent the skill that teaches it swarmory:
 
 ```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh                   # uv, if you don't have it; then open a new shell
 uv tool install git+https://github.com/vtrivedy/swarmory
-npx skills add vtrivedy/swarmory --skill swarmory -g -y
+npx skills add vtrivedy/swarmory --skill swarmory -g -y           # needs Node 22.20 or newer
 ```
 
 Then ask your agent to run a swarm. The skill has it install what's missing, write the mission with you, and show you
@@ -31,7 +32,6 @@ By hand, you need [uv](https://docs.astral.sh/uv/), git, and the command of each
 `codex`, `agy` or `pi`. Deep Agents needs only uv.
 
 ```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh     # uv, then open a new shell for PATH
 curl -fsSL https://claude.ai/install.sh | bash      # claude, for claude-code agents
 npm install -g @openai/codex                        # codex, for codex agents
 ```
