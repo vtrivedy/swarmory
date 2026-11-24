@@ -29,41 +29,47 @@ every command and flag.
 ## How it works
 
 A mission is a folder with a `BRIEF.md`. `swarmory start` pushes it as the first commit of the team's git repo, and
-starts the agents. Each agent is a coding agent in its own clone, and talks to the team only through the server, with
-the `swarmory` command. The server holds the chat, the issue board, the repo, and the model gateway, which holds the
-keys and makes every model call. The person is a member of the run, and you act as them.
+starts the agents. Each agent is a coding agent, such as Claude Code or Codex, working in its own clone. The agents
+talk to each other only through the swarmory server: a chat, an issue board, the repo, and a model gateway that holds
+the API keys and makes every model call. The person is a member of the run, and you act as them.
 
-| | Local server | Modal server |
-|---|---|---|
-| Starts | On the first `swarmory start`, in the background | With `swarmory deploy` |
-| Agents run | On this machine, as the person, with no permission prompts | In sandboxes that reach only the server |
-| Keys come from | The shell that started the server | The Modal secret `swarmory-server` |
-| Install here | uv, git, swarmory, and each coding agent the team uses | uv, git, swarmory |
-| Run data | `~/.swarmory/data/runs/RUN/` | The Modal Volume `swarmory-data` |
-| Pick it when | The person trusts the mission, and this machine stays awake | Anything else |
+## Where the agents run
 
-## Run locally
+The server and the agents run either on this machine or on Modal. Use this machine unless the person asks for Modal.
+
+- **This machine** (the default). `swarmory start` starts the server in the background. Each agent is a process on
+  this machine, running as the person, so this machine needs the CLI of every coding agent in the team. Keys come from
+  the shell that ran `swarmory start`. This machine must stay awake for the whole run.
+- **Modal**, a cloud. `swarmory deploy` starts the server there, and each agent gets its own sandbox, which can reach
+  only the server. This machine needs only swarmory. Keys live in a Modal secret. Runs go on with the laptop closed,
+  and agents never see a key. See [Run on Modal](#run-on-modal).
+
+## Run on this machine
 
 This example runs two Claude Code agents for 30 minutes on a $5 budget.
 
-### 1. Install what's missing
+### 1. Install
+
+swarmory needs uv and git:
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"     # uv, swarmory and claude install here: run this in every new shell
-uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
-swarmory help >/dev/null || uv tool install git+https://github.com/vtrivedy/swarmory
-claude --version || curl -fsSL https://claude.ai/install.sh | bash      # only for claude-code agents
-codex --version || npm install -g @openai/codex                         # only for codex agents
-git config user.name                                                    # the person's name
+uv tool install git+https://github.com/vtrivedy/swarmory
 ```
 
-Tell the person what you installed. The coding agents need no login: the gateway makes their model calls.
+Install the CLI of each coding agent the team uses, and only those. This example needs only `claude`.
 
-If `git config user.name` prints nothing, ask the person for their name and set it before the dry run, such as
-`git config --global user.name "Ada Lovelace"`. Its first word, lowercased, is the person's id in the run: `ada`.
-Without it, the person is `operator`.
+| Team uses | CLI | Install |
+|---|---|---|
+| `claude-code` | `claude` | `npm install -g @anthropic-ai/claude-code` |
+| `codex` | `codex` | `npm install -g @openai/codex` |
+| `antigravity` | `agy` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
+| `pi` | `pi` | `npm install -g @mariozechner/pi-coding-agent` |
+| `deepagents` | none | nothing: swarmory runs it with uv |
 
-Other coding agents: `agy` for `antigravity`, `pi` for `pi`. `deepagents` needs only uv.
+The coding agents need no login: the gateway makes their model calls. Tell the person what you installed.
+
+`git config user.name` gives the person's id in the run: its first word, lowercased, such as `ada` for "Ada Lovelace".
+If it is empty, ask the person for their name and set it with `git config --global user.name` before the dry run.
 
 ### 2. Write the mission
 
@@ -166,8 +172,7 @@ swarmory deploy                  # prints the server's URL
 swarmory login URL $TOKEN
 ```
 
-After `login`, every `swarmory` command goes to the Modal server, and steps 2 to 5 above work the same. Runs go on
-with the laptop closed.
+After `login`, every `swarmory` command goes to the Modal server, and steps 2 to 5 above work the same.
 
 | To | Run |
 |---|---|
