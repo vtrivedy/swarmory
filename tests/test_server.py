@@ -1,6 +1,7 @@
 """The one server: it exports a run with no token or digest in it, a pasted token included, and `swarmory start` runs a
 whole local run with one command. Agents are the fake harness's, or Stub's workers that run nowhere, and Harbor is a
 stand-in that writes what Harbor writes."""
+import dataclasses
 import io
 import json
 import os
@@ -14,8 +15,12 @@ import time
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from conftest import OPENER, code, post, soon
 
+from swarmory import cli
+from swarmory.control_plane import verbs
 from swarmory.control_plane.policy import sha
 
 FAKE_LITELLM = Path(__file__).with_name("fake_litellm.py")
@@ -107,6 +112,20 @@ def test_a_dry_start_checks_the_run_and_starts_nothing(serve, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY")
     refused = served("start", mission="hello", team=team, me="vivek", dry=True)
     assert refused["status"] == 400 and "needs OPENAI_API_KEY" in refused["error"], refused
+
+
+def test_a_dry_start_on_a_server_without_dry_runs_stops_what_it_started(serve, tmp_path, monkeypatch):
+    served, old = serve(), verbs.VERBS["start"]
+    monkeypatch.setitem(verbs.VERBS, "start", dataclasses.replace(  # an older server, which ignores dry
+        old, call=lambda server, req, token: old.call(server, {k: v for k, v in req.items() if k != "dry"}, token)))
+    monkeypatch.setattr(cli, "LOGIN", str(tmp_path / "login"))
+    (tmp_path / "login").write_text(json.dumps({"url": served.url, "token": served.token}))
+    folder = tmp_path / "hello"
+    folder.mkdir()
+    (folder / "BRIEF.md").write_text("# Say hello\n")
+    with pytest.raises(SystemExit, match="is older than this swarmory"):
+        cli.start_run(folder, [{"harness": "claude-code"}], dry=True)
+    assert [r["state"] for r in served("runs")["runs"]] == ["stopped"]
 
 
 def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp_path, monkeypatch):

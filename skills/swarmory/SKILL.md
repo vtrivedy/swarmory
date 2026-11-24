@@ -62,7 +62,8 @@ agy --version         # for an antigravity team
 pi --version          # for a pi team
 ```
 
-Only the harnesses the person will use are needed.
+Only the harnesses the person will use are needed. Once the mission exists, `swarmory start MISSION --dry-run`
+checks that the server has each key and coding agent its team needs (section 4).
 
 **For Modal**, also:
 

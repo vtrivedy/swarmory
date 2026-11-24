@@ -594,9 +594,13 @@ def start_run(mission, team=None, **options) -> dict:
         fail("a server answers at %s, and you have no login for it: `swarmory login %s TOKEN`, with its operator token"
              % (url, url))
     r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
+    rid = r["data"].get("run")
     if options.get("dry"):
+        if rid:  # a server older than --dry-run ignores it and starts the run
+            fetch(url, "/api/stop", token, {"run": rid})
+            fail("the server at %s is older than this swarmory and has no dry run, so it started %s, now stopped. "
+                 "Update the server: `swarmory deploy` on Modal, or stop the local one and run this again" % (url, rid))
         return r
-    rid = r["data"]["run"]
     try:
         seed.make_seed(mission, run_url(url, rid), token)
     except SystemExit as e:  # fail()'s, from git
