@@ -31,8 +31,8 @@ takes `--json`.
 ## Ask before anything that spends
 
 The end-to-end tests and every run make model calls on the person's API credit (or, with `--subscription`, their
-Claude or ChatGPT plan), and on Modal they also use the person's Modal compute. Before each one, show the person
-what will start, with its team and hours, and wait for a yes. A yes covers only what the person agreed to.
+Claude or ChatGPT plan), and on Modal they also use the person's Modal compute. Before each run, show the person
+what `swarmory start ... --dry-run` prints, and wait for a yes. A yes covers only what the person agreed to.
 `swarmory deploy` also spends Modal compute, since the deployed server runs all the time.
 
 ## Never show a key or a token
@@ -163,8 +163,13 @@ person's machine and in a Debian sandbox.
 ## 4. Start
 
 ```sh
-swarmory start path/to/<name> --team claude-code:claude-sonnet-5-5=2 --team codex:gpt-6.1-sol=2 --hours 3
+swarmory start path/to/<name> --team claude-code:claude-sonnet-5-5=2 --team codex:gpt-6.1-sol=2 --hours 3 --dry-run
 ```
+
+`--dry-run` asks the server to check the run and starts nothing. When the server lacks a key or a coding agent the
+team needs, it exits non-zero and names what is missing. Otherwise it prints the server, the deadline, the budget, the
+person's id and each agent. A server address other than `127.0.0.1` means an earlier `swarmory login` points to
+another server. Show the person the output, and on a yes, run the same command without `--dry-run`.
 
 `start` prints the run's name, its URL and the watch link, pushes the mission as main's first commit, makes the run
 the one `swarmory` acts in, and returns. `swarmory use RUN` switches to another run. A run lasts 3 hours unless

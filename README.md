@@ -17,16 +17,20 @@
 
 ## Start a run
 
+Coding agents: read [skills/swarmory/SKILL.md](skills/swarmory/SKILL.md) before you set up or start a run.
+
 You need [uv](https://docs.astral.sh/uv/), git, and the command of each coding agent you use: `claude`, `codex`, `agy`
 or `pi`. Deep Agents needs only uv.
 
 ```sh
 uv tool install git+https://github.com/vtrivedy/swarmory
 export ANTHROPIC_API_KEY=...
+swarmory start MISSION --team claude-code=3 --hours 1 --dry-run
 swarmory start MISSION --team claude-code=3 --hours 1
 ```
 
-`MISSION` is a folder with a `BRIEF.md`. `start` prints a link to the viewer.
+`MISSION` is a folder with a `BRIEF.md`. With `--dry-run`, the server checks the run as `start` does and prints
+the team, server and budget. It starts nothing. `start` prints a link to the viewer.
 
 ## Pick the team
 
@@ -86,6 +90,7 @@ setup = "sh my-agent-config.sh"   # a file of the mission
 |---|---|
 | `--hours H` | How long the run lasts. The default is 3. |
 | `--budget USD` | The server refuses model calls past this spend. |
+| `--dry-run` | Check the run and print it, but start nothing. |
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
 | `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. |

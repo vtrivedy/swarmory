@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -92,6 +93,20 @@ def test_an_export_holds_the_runs_records_and_no_token_or_digest(serve, tmp_path
     for name in ("sessions/session-001.jsonl", "agent.log"):
         assert b"[hidden]" in files[f"{run.id}/members/ada/{name}"]
     assert post(run.url, tokens["ada"], "me")["me"]["id"] == "ada" and code(f"{run.url}/export", tokens["ada"]) == 403
+
+
+def test_a_dry_start_checks_the_run_and_starts_nothing(serve, monkeypatch):
+    served = serve()
+    team = [{"harness": "claude-code"}, {"harness": "codex", "model": "gpt-6.1-sol", "name": "lead"}]
+    dry = served("start", mission="hello", team=team, me="vivek", budget=5, dry=True)
+    assert dry.pop("deadline") > time.time() + 3 * 3600 - 60
+    assert dry == {"dry": True, "server": served.url, "budget": 5, "me": "vivek",
+                   "members": [{"id": "ada", "harness": "claude-code", "model": None},
+                               {"id": "lead", "harness": "codex", "model": "gpt-6.1-sol"}]}, dry
+    assert served("runs") == {"runs": []}
+    monkeypatch.delenv("OPENAI_API_KEY")
+    refused = served("start", mission="hello", team=team, me="vivek", dry=True)
+    assert refused["status"] == 400 and "needs OPENAI_API_KEY" in refused["error"], refused
 
 
 def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp_path, monkeypatch):

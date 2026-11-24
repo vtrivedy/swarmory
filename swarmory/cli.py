@@ -594,6 +594,8 @@ def start_run(mission, team=None, **options) -> dict:
         fail("a server answers at %s, and you have no login for it: `swarmory login %s TOKEN`, with its operator token"
              % (url, url))
     r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
+    if options.get("dry"):
+        return r
     rid = r["data"]["run"]
     try:
         seed.make_seed(mission, run_url(url, rid), token)
@@ -622,12 +624,14 @@ def start(argv):
     p.add_argument("--jobs", action="store_true", help="let members ask for jobs with `swarmory job`: Harbor evals "
                    "of the task folders they commit")
     p.add_argument("--subscription", action="store_true", help="call models with the server's subscription logins")
+    p.add_argument("--dry-run", action="store_true", help="check the run and print its server, deadline, budget "
+                   "and team, but start nothing")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     r = start_run(a.mission, a.team and parse_team(a.team), hours=a.hours, budget=a.budget, grant=a.grant or [],
-                  allow=a.allow or [], jobs=a.jobs, subscription=a.subscription)
+                  allow=a.allow or [], jobs=a.jobs, subscription=a.subscription, dry=a.dry_run)
     show(r, {"--json": a.json})
-    if not a.json:
+    if not a.json and not a.dry_run:
         out("Pushed the mission to main: the agents are starting. `swarmory` now acts as you in this run.")
 
 
