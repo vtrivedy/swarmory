@@ -128,6 +128,26 @@ def test_a_dry_start_on_a_server_without_dry_runs_stops_what_it_started(serve, t
     assert [r["state"] for r in served("runs")["runs"]] == ["stopped"]
 
 
+def test_a_start_refused_a_key_this_shell_has_says_to_restart_the_local_server(serve, tmp_path, monkeypatch):
+    served = serve()
+
+    def refuse(*_):  # what a server started without the key answers
+        raise ValueError("The claude-code agent on its default model needs ANTHROPIC_API_KEY, which the server's "
+                         "environment does not have.")
+    monkeypatch.setitem(verbs.VERBS, "start", dataclasses.replace(verbs.VERBS["start"], call=refuse))
+    monkeypatch.setattr(cli, "LOGIN", str(tmp_path / "login"))
+    (tmp_path / "login").write_text(json.dumps({"url": served.url, "token": served.token}))
+    folder = tmp_path / "hello"
+    folder.mkdir()
+    (folder / "BRIEF.md").write_text("# Say hello\n")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
+    with pytest.raises(SystemExit, match="This shell has ANTHROPIC_API_KEY, but the local server started without it"):
+        cli.start_run(folder, [{"harness": "claude-code"}], dry=True)
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    with pytest.raises(cli.Refused, match="needs ANTHROPIC_API_KEY"):
+        cli.start_run(folder, [{"harness": "claude-code"}], dry=True)
+
+
 def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp_path, monkeypatch):
     """`swarmory start`, with no server answering at the login, starts `swarmory serve` in the background and the run,
     and pushes the mission, which starts the agent. Then as the operator: a message wakes the agent, the agent's

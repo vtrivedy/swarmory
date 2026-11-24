@@ -21,7 +21,8 @@ You drive swarmory with the `swarmory` command or its MCP tools. A tool does wha
 | `read`, `send`, `issues`, `wait` and the other team tools | `swarmory read`, `swarmory send`, `swarmory issues`, `swarmory wait`, in the run `swarmory start` or `swarmory use RUN` picked |
 | `job`, `jobs`, `job-show`, `cancel` | `swarmory job harbor DIR`, `swarmory job list`, `swarmory job show ID`, `swarmory job cancel ID` |
 
-`swarmory` is on PATH after `uv tool install git+https://github.com/vtrivedy/swarmory`. In a checkout of this repo,
+`swarmory` is on PATH after `uv tool install git+https://github.com/vtrivedy/swarmory`, or
+`uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'` to use Modal. In a checkout of this repo,
 write `uv run swarmory` instead. The MCP tools come from `swarmory mcp`. A team tool takes the run's id, or acts in
 the run the login holds. The `job` tool pushes nothing, so its commit must already be pushed to the run's repo, which
 `swarmory job` does for you. Only the command can `get` a shared file, `use` another run, `login`, `export` a run's
@@ -62,8 +63,18 @@ agy --version         # for an antigravity team
 pi --version          # for a pi team
 ```
 
-Only the harnesses the person will use are needed. Once the mission exists, `swarmory start MISSION --dry-run`
-checks that the server has each key and coding agent its team needs (section 4).
+Only the harnesses the person will use are needed, and on Modal none: they are in the agents' image. Install what's
+missing, and tell the person what you installed:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh     # uv; in this shell, then `source $HOME/.local/bin/env`
+curl -fsSL https://claude.ai/install.sh | bash      # claude
+npm install -g @openai/codex                        # codex
+```
+
+`git config user.name` is the person's id in a run. If it is empty, ask the person for a name and set it. Once the
+mission exists, `swarmory start MISSION --dry-run` checks that the server has each key and coding agent its team needs
+(section 4).
 
 **For Modal**, also:
 
@@ -82,7 +93,8 @@ uvx modal secret create swarmory-server SWARMORY_OPERATOR_TOKEN=$TOKEN ANTHROPIC
 ```
 
 Then the person runs `swarmory deploy`, once and again after any update to swarmory, and `swarmory login URL TOKEN`
-with the URL it prints and that token. Every `swarmory` command then goes to that server.
+with the URL it prints and that token. Every `swarmory` command then goes to that server. README's "Run on Modal" says
+how to update swarmory, change a key, stop the server, and go back to a local server.
 
 **With a subscription**, the gateway calls with the person's plan login instead of an API key. Claude Code's calls use
 `CLAUDE_CODE_OAUTH_TOKEN`, which `claude setup-token` prints. Codex's calls use `CODEX_AUTH_JSON`, the contents of
@@ -192,9 +204,11 @@ another server. Show the person the output, and on a yes, run the same command w
 `start` prints the run's name, its URL and the watch link, pushes the mission as main's first commit, makes the run
 the one `swarmory` acts in, and returns. `swarmory use RUN` switches to another run. A run lasts 3 hours unless
 `--hours` says otherwise, and the person's id in it is their first name from git. The agents start once main exists.
-If the run could not start, `start` exits non-zero and says why. When no server is running, `start` starts a local
-one in the background from your shell, so the person's keys must be in that shell. The run goes on until its hours
-are up or it is stopped. Keep a local server's machine awake for the whole run.
+If the run could not start, `start` exits non-zero and says why. When no server is running, `start`, with or without
+`--dry-run`, starts a local one in the background from your shell, so the person's keys must be in that shell. That
+server keeps running after runs end, with that shell's environment. When the person adds a key, stop the server with
+`pkill -f '[s]warmory.cli serve'` and run `start` again from a shell that has it. The run goes on until its hours are up
+or it is stopped. Keep a local server's machine awake for the whole run.
 
 ## 5. Watch the run
 
@@ -237,7 +251,7 @@ A run stops at its deadline, and stays readable after. To review or compare runs
 `swarmory export RUN` unpacks them, with no token in them, into `./RUN`. Then, from a checkout:
 
 ```sh
-swarmory export RUN                             # makes ./RUN
+swarmory export RUN                             # makes ./RUN; git clone RUN/work.bundle gets the code
 uv run tools/compare.py RUN OTHER_RUN        # runs side by side: messages, issues, turns, pushes, commits, tokens
 uv run tools/report.py RUN                   # RUN/report.html, written by a coding agent from the records
 ```

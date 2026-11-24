@@ -23,15 +23,28 @@ You need [uv](https://docs.astral.sh/uv/), git, and the command of each coding a
 or `pi`. Deep Agents needs only uv.
 
 ```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh     # uv, then open a new shell for PATH
+curl -fsSL https://claude.ai/install.sh | bash      # claude, for claude-code agents
+npm install -g @openai/codex                        # codex, for codex agents
+```
+
+```sh
 uv tool install git+https://github.com/vtrivedy/swarmory
 export ANTHROPIC_API_KEY=...
 swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
 swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5
 ```
 
-`MISSION` is a folder with a `BRIEF.md`, which says what to build and how to check it. To use your Claude or ChatGPT
-plan instead of an API key, see [Use a subscription](#use-a-subscription). With `--dry-run`, the server checks the run as `start` does and prints
-the team, server and budget. It starts nothing. `start` prints a link to the viewer.
+`MISSION` is a folder with a `BRIEF.md`, which says what to build and how to check it. It need not be a git repo. To
+use your Claude or ChatGPT plan instead of an API key, see [Use a subscription](#use-a-subscription).
+
+With `--dry-run`, the server checks the run as `start` does and prints the team, server and budget, but starts no run.
+It checks that each key is set, not that it works. `start` prints the viewer link, which shows the whole run to anyone
+who has it. Your id in the run is your first name from `git config user.name`.
+
+The first `start` or `--dry-run` starts a local server in the background. It keeps running after runs end, with the
+environment of the shell that started it. To give it a new key, stop it with `pkill -f '[s]warmory.cli serve'`, then
+run `start` again.
 
 ## Pick the team
 
@@ -94,6 +107,7 @@ setup = "sh my-agent-config.sh"   # a file of the mission
 | `--dry-run` | Check the run and print it, but start nothing. |
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
+| `--allow HOST` | On Modal, let agents reach `HOST` too. |
 | `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. |
 
 ## How agents work
@@ -118,7 +132,8 @@ mission's call: write it in the mission's BRIEF.md, under "How we work", and giv
 | `swarmory stop` | Stop the run. |
 | `swarmory help` | Every command. |
 
-The team's work is a git repo: `git clone ~/.swarmory/data/runs/RUN/work.git`.
+The team's work is a git repo. On a local server, `git clone ~/.swarmory/data/runs/RUN/work.git`. On any server,
+`swarmory export RUN` writes the run's records to `./RUN`, and `git clone RUN/work.bundle` gets the code.
 
 ## Use a subscription
 
@@ -128,20 +143,32 @@ export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"
 swarmory start MISSION --subscription
 ```
 
-`claude setup-token` prints the first value.
+`claude setup-token` prints the first value. On Modal, put both in the `swarmory-server` secret instead. The server
+never refreshes the ChatGPT login, so run any `codex` command just before `start`, and on Modal put the fresh
+`auth.json` in the secret again.
 
 ## Run on Modal
 
 ```sh
 uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'
-TOKEN=$(openssl rand -hex 16)
+uvx modal setup                    # once, if you have no Modal login
+TOKEN=$(openssl rand -hex 16)      # keep it: Modal won't show it again
 uvx modal secret create swarmory-server SWARMORY_OPERATOR_TOKEN=$TOKEN ANTHROPIC_API_KEY=... OPENAI_API_KEY=...
 swarmory deploy
 swarmory login URL $TOKEN
 ```
 
-`deploy` prints `URL`. After `login`, `swarmory start` runs on Modal. Each agent's sandbox reaches the server and
-nothing else.
+`deploy` prints `URL`. After `login`, every `swarmory` command goes to that server, and runs go on with your laptop
+closed. Your machine needs uv, git and swarmory, but no coding agents: they are in the agents' image. Each agent's
+sandbox reaches the server and nothing else, unless `--allow` adds a host. The server runs all the time, so it spends
+Modal compute between runs too.
+
+| To | Run |
+|---|---|
+| Update swarmory | `uv tool upgrade swarmory`, then `swarmory deploy`. Running agents go on, and the URL stays the same. |
+| Change a key | `uvx modal secret create --force swarmory-server ...` with every value, the same token too, then `swarmory deploy`. |
+| Stop the server | `swarmory stop RUN` for each run, then `uvx modal app stop swarmory`. Runs stay in the Modal Volume `swarmory-data`, and `swarmory deploy` serves them again. |
+| Use a local server again | `mv ~/.swarmory/login ~/.swarmory/login.modal`, and stop any local server from before, `pkill -f '[s]warmory.cli serve'`. The next `start` starts a new one. Move the file back to return to Modal. |
 
 ## Use it from an MCP client
 

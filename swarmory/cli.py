@@ -595,7 +595,14 @@ def start_run(mission, team=None, **options) -> dict:
     elif not mine:
         fail("a server answers at %s, and the login file %s has no token for it: log in with its operator token, "
              "`swarmory login %s TOKEN`, or stop that server and run this again" % (url, LOGIN, url))
-    r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
+    try:
+        r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
+    except Refused as e:  # a local server keeps the environment of the shell that started it
+        have = [k for k in re.findall(r"\b[A-Z][A-Z0-9_]*_(?:API_KEY|TOKEN|JSON)\b", str(e)) if os.environ.get(k)]
+        if have and urllib.parse.urlsplit(url).hostname in ("127.0.0.1", "localhost"):
+            fail("%s\nThis shell has %s, but the local server started without it. Stop the server, "
+                 "`pkill -f '[s]warmory.cli serve'`, and run this again." % (e, have[0]))
+        raise
     rid = r["data"].get("run")
     if options.get("dry"):
         if rid:  # a server older than --dry-run ignores it and starts the run
