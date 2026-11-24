@@ -22,8 +22,9 @@ You drive swarmory with the `swarmory` command or its MCP tools. A tool does wha
 | `job`, `jobs`, `job-show`, `cancel` | `swarmory job harbor DIR`, `swarmory job list`, `swarmory job show ID`, `swarmory job cancel ID` |
 
 `swarmory` is on PATH after `uv tool install git+https://github.com/vtrivedy/swarmory`, or
-`uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'` to use Modal. In a checkout of this repo,
-write `uv run swarmory` instead. The MCP tools come from `swarmory mcp`. A team tool takes the run's id, or acts in
+`uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'` to use Modal. From a clone, `uv tool install PATH`
+installs it, and `uv tool install --reinstall PATH` updates it after a `git pull`. To change swarmory itself, use
+`uv run swarmory` in the clone instead. The MCP tools come from `swarmory mcp`. A team tool takes the run's id, or acts in
 the run the login holds. The `job` tool pushes nothing, so its commit must already be pushed to the run's repo, which
 `swarmory job` does for you. Only the command can `get` a shared file, `use` another run, `login`, `export` a run's
 records, `serve` and `deploy`. `swarmory help` lists every command, and every command but `serve`, `deploy` and `mcp`

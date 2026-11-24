@@ -35,6 +35,8 @@ swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budg
 swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5
 ```
 
+From a clone, `uv tool install ./swarmory` installs it instead, and `--reinstall` updates it after a `git pull`.
+
 `MISSION` is a folder with a `BRIEF.md`, which says what to build and how to check it. It need not be a git repo. To
 use your Claude or ChatGPT plan instead of an API key, see [Use a subscription](#use-a-subscription).
 
