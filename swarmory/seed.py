@@ -23,7 +23,7 @@ def plain_env(**extra) -> dict:
 
 def private(mission: Path, rel: Path) -> bool:
     """rel, in the mission folder, is a secret by its name or its link's target's (PRIVATE), or links out of it to
-    anywhere but a skills folder of this checkout: skills/, or swarmory_harbor/skills/."""
+    anywhere but a skills folder of this checkout (skills/)."""
     real = (mission / rel).resolve()
     skill = real.is_relative_to(HERE) and "skills" in real.relative_to(HERE).parts[:2]
     return (any(fnmatch.fnmatch(n, g) for n in (rel.name, real.name) for g in PRIVATE)

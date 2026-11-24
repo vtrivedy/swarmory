@@ -14,7 +14,7 @@ and log in one evidence folder. None of them calls a model.
 3. Set two variables:
 
    ```bash
-   S=<swarmory checkout>/swarmory_harbor/skills/eval-factory/scripts
+   S=<this skill's folder>/scripts
    TASK=<absolute path to the task folder>
    ```
 

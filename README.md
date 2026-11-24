@@ -17,10 +17,18 @@
 
 ## Start a run
 
-Coding agents: read [skills/swarmory/SKILL.md](skills/swarmory/SKILL.md) before you set up or start a run.
+Install the CLI, and give your coding agent the skill that teaches it swarmory:
 
-You need [uv](https://docs.astral.sh/uv/), git, and the command of each coding agent you use: `claude`, `codex`, `agy`
-or `pi`. Deep Agents needs only uv.
+```sh
+uv tool install git+https://github.com/vtrivedy/swarmory
+npx skills add vtrivedy/swarmory --skill swarmory -g
+```
+
+Then ask your agent to run a swarm. The skill has it install what's missing, write the mission with you, and show you
+a dry run before anything spends.
+
+By hand, you need [uv](https://docs.astral.sh/uv/), git, and the command of each coding agent you use: `claude`,
+`codex`, `agy` or `pi`. Deep Agents needs only uv.
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh     # uv, then open a new shell for PATH
@@ -29,13 +37,12 @@ npm install -g @openai/codex                        # codex, for codex agents
 ```
 
 ```sh
-uv tool install git+https://github.com/vtrivedy/swarmory
 export ANTHROPIC_API_KEY=...
 swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
 swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5
 ```
 
-From a clone, `uv tool install ./swarmory` installs it instead, and `--reinstall` updates it after a `git pull`.
+`uv tool upgrade swarmory` updates the CLI. From a clone, `uv tool install .` installs it instead.
 
 `MISSION` is a folder with a `BRIEF.md`, which says what to build and how to check it. It need not be a git repo. To
 use your Claude or ChatGPT plan instead of an API key, see [Use a subscription](#use-a-subscription).
@@ -110,7 +117,7 @@ setup = "sh my-agent-config.sh"   # a file of the mission
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
 | `--allow HOST` | On Modal, let agents reach `HOST` too. |
-| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. |
+| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. The `eval-factory` skill and [examples/eval-factory](examples/eval-factory) build such evals. |
 
 ## How agents work
 
@@ -185,13 +192,7 @@ claude mcp add swarmory -- swarmory mcp
 
 ## Develop
 
-```sh
-uvx --python 3.12 --with-editable . pytest tests -q -p no:cacheprovider
-bash tests/e2e.sh
-```
-
-`tests/model/Delivery.tla` is a TLA+ model of how messages reach an agent. Check it with the pstack `statechart` skill
-after a change to `Team.inbox`, `Team.next` or `Team.mark_read`.
+[AGENTS.md](AGENTS.md) says what's where and how to test a change.
 
 ## Credits
 

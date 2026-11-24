@@ -21,11 +21,13 @@ You drive swarmory with the `swarmory` command or its MCP tools. A tool does wha
 | `read`, `send`, `issues`, `wait` and the other team tools | `swarmory read`, `swarmory send`, `swarmory issues`, `swarmory wait`, in the run `swarmory start` or `swarmory use RUN` picked |
 | `job`, `jobs`, `job-show`, `cancel` | `swarmory job harbor DIR`, `swarmory job list`, `swarmory job show ID`, `swarmory job cancel ID` |
 
-`swarmory` is on PATH after `uv tool install git+https://github.com/vtrivedy/swarmory`, or
-`uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'` to use Modal. From a clone, `uv tool install PATH`
-installs it, and `uv tool install --reinstall PATH` updates it after a `git pull`. To change swarmory itself, use
-`uv run swarmory` in the clone instead. The MCP tools come from `swarmory mcp`. A team tool takes the run's id, or acts in
-the run the login holds. The `job` tool pushes nothing, so its commit must already be pushed to the run's repo, which
+If `swarmory` isn't on PATH, install it with `uv tool install git+https://github.com/vtrivedy/swarmory`, or
+`uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'` to use Modal. From a clone of the repo,
+`uv tool install PATH` does the same. This skill follows the newest swarmory: if a command or flag here is refused as
+unknown, run `uv tool upgrade swarmory` (`uv tool install --reinstall PATH` for a clone). `swarmory help` and
+`swarmory COMMAND --help` give every flag.
+
+The MCP tools come from `swarmory mcp`. A team tool takes the run's id, or acts in the run the login holds. The `job` tool pushes nothing, so its commit must already be pushed to the run's repo, which
 `swarmory job` does for you. Only the command can `get` a shared file, `use` another run, `login`, `export` a run's
 records, `serve` and `deploy`. `swarmory help` lists every command, and every command but `serve`, `deploy` and `mcp`
 takes `--json`.
@@ -120,8 +122,7 @@ past the run's end, and `--budget USD` caps its model calls. On a local server, 
 machine and reach the gateway through `host.docker.internal`. A local server refuses only a coding agent's job whose trials would run
 on Modal. On a Modal server the job workers need the secret `swarmory-modal` with `MODAL_TOKEN_ID` and
 `MODAL_TOKEN_SECRET`, which the person creates. Each job runs up to 8 trials at once, and jobs don't wait for each
-other. Link `swarmory_harbor/skills/running-harbor-jobs` into the mission's `skills/` so agents know
-how jobs flow.
+other. Copy the repo's `skills/running-harbor-jobs` into the mission's `skills/` so agents know how jobs flow.
 
 **Grants** give every agent environment variables, such as API keys and tokens. `--grant NAME` copies the variable
 `NAME` from a local server's environment, or gives every variable in the Modal secret `NAME` on Modal. On Modal an
