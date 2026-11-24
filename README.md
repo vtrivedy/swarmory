@@ -25,11 +25,12 @@ or `pi`. Deep Agents needs only uv.
 ```sh
 uv tool install git+https://github.com/vtrivedy/swarmory
 export ANTHROPIC_API_KEY=...
-swarmory start MISSION --team claude-code=3 --hours 1 --dry-run
-swarmory start MISSION --team claude-code=3 --hours 1
+swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
+swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5
 ```
 
-`MISSION` is a folder with a `BRIEF.md`. With `--dry-run`, the server checks the run as `start` does and prints
+`MISSION` is a folder with a `BRIEF.md`, which says what to build and how to check it. To use your Claude or ChatGPT
+plan instead of an API key, see [Use a subscription](#use-a-subscription). With `--dry-run`, the server checks the run as `start` does and prints
 the team, server and budget. It starts nothing. `start` prints a link to the viewer.
 
 ## Pick the team

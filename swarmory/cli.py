@@ -165,7 +165,8 @@ def load_login():
     """(the run's address, the token) that run verbs use: a member's run, or the operator's current run."""
     d = saved()
     if not d:
-        fail("not logged in: run `swarmory login URL TOKEN`")
+        fail("not logged in: `swarmory start MISSION` starts a local server and logs you in to it, and "
+             "`swarmory login URL TOKEN` logs you in to another")
     if "/r/" not in d["url"] and not d.get("run"):
         fail("you are logged in to a server: pick a run with `swarmory use RUN` (`swarmory runs` lists them)")
     return run_url(d["url"], d.get("run")), d["token"]
@@ -475,7 +476,8 @@ def login(pos):
     if not pos:
         d = saved()
         if not d:
-            fail("not logged in: run `swarmory login URL TOKEN`")
+            fail("not logged in: `swarmory start MISSION` starts a local server and logs you in to it, and "
+                 "`swarmory login URL TOKEN` logs you in to another")
         return {"url": run_url(d["url"], d.get("run"))}
     url = pos[0].rstrip("/")
     u = urllib.parse.urlsplit(url)
@@ -591,8 +593,8 @@ def start_run(mission, team=None, **options) -> dict:
             save_login(url, token)
         serve_here(url, token)
     elif not mine:
-        fail("a server answers at %s, and you have no login for it: `swarmory login %s TOKEN`, with its operator token"
-             % (url, url))
+        fail("a server answers at %s, and the login file %s has no token for it: log in with its operator token, "
+             "`swarmory login %s TOKEN`, or stop that server and run this again" % (url, LOGIN, url))
     r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
     rid = r["data"].get("run")
     if options.get("dry"):
@@ -619,7 +621,8 @@ def start(argv):
     p.add_argument("mission", help="a mission folder: BRIEF.md and whatever the team needs")
     p.add_argument("--team", action="append", metavar="HARNESS[:MODEL]=N",
                    help=f"{names}; repeatable (default: the mission's team.toml, else two of the first)")
-    p.add_argument("--hours", type=float, default=HOURS, help=f"how long the run lasts ({HOURS})")
+    p.add_argument("--hours", type=float, default=HOURS,
+                   help=f"how long the run lasts, in hours: 0.5 is 30 minutes ({HOURS})")
     p.add_argument("--budget", type=float, metavar="USD", help="the most the run's model calls may cost, in dollars; "
                    "a budgeted run refuses a call to a model that has no listed price, so name each agent's model")
     p.add_argument("--grant", action="append", metavar="NAME", help="give every agent NAME: a variable of a local "

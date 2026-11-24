@@ -152,7 +152,24 @@ a "How we work" section of BRIEF.md, with each agent's role in team.toml. Start 
   setup.sh     optional: installs tools, and must be safe to run twice
 ```
 
-BRIEF.md's first line names the first commit. It says what to build and, if there is one, how to check it.
+BRIEF.md's first line, without its `#`, is the first commit's message. The brief says what to build and, if there is
+one, how to check it. A small one:
+
+```markdown
+# Build wc.py, a word-frequency CLI
+
+`python3 wc.py FILE --top N` prints the N most common words in FILE, one `word count` per line, most common first.
+Words are lowercase runs of letters.
+
+## How to check it
+
+`python3 -m unittest discover -s tests` passes, and the tests cover an empty file, ties, and `--top` larger than the
+number of words.
+
+## How we work
+
+One agent writes wc.py and the other writes the tests. Each pushes small commits to main, and reviews the other's.
+```
 
 Everything in the folder reaches the agents, so leave out answers and private notes. `start` leaves
 out what the mission's `.gitignore` ignores, `.env`, `.env.*`, `*.pem` and `*.key` files, and symlinks that point
