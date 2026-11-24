@@ -110,6 +110,7 @@ It starts the local server if none is running, checks the run, and starts nothin
 missing, it exits non-zero and names it. It checks that a key is set, not that it works. On success it prints:
 
 ```
+No server answers at http://127.0.0.1:7700: starting one here (`swarmory serve`, its output in ~/.swarmory/serve.log)...
 server  http://127.0.0.1:7700
 until   20:00 UTC
 budget  $5.00

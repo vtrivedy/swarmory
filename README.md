@@ -31,7 +31,7 @@ By hand, you need [uv](https://docs.astral.sh/uv/), git, and the command of each
 `codex`, `agy` or `pi`. Deep Agents needs only uv.
 
 ```sh
-curl -fsSL https://claude.ai/install.sh | bash      # claude, for claude-code agents
+npm install -g @anthropic-ai/claude-code           # claude, for claude-code agents
 npm install -g @openai/codex                        # codex, for codex agents
 ```
 
