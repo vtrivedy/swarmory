@@ -192,7 +192,17 @@ claude mcp add swarmory -- swarmory mcp
 
 ## Develop
 
-[AGENTS.md](AGENTS.md) says what's where and how to test a change.
+`swarmory/` is the package: the CLI (`cli.py`), the server (`control_plane/`), where agents run (`backends/`), the
+coding agents (`harness/`), and the agent and job workers (`worker/`). `skills/` holds the skills that
+`npx skills add vtrivedy/swarmory` installs. They ship from GitHub, not with the package.
+
+```sh
+uvx --python 3.12 --with-editable . pytest tests -q -p no:cacheprovider
+bash tests/e2e.sh    # a real run with real model calls: it spends
+```
+
+`tests/model/Delivery.tla` models how messages reach an agent. Check it after a change to `Team.inbox`, `Team.next` or
+`Team.mark_read`.
 
 ## Credits
 
