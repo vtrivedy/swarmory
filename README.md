@@ -21,7 +21,7 @@ Install the CLI, and give your coding agent the skill that teaches it swarmory:
 
 ```sh
 uv tool install git+https://github.com/vtrivedy/swarmory
-npx skills add vtrivedy/swarmory --skill swarmory -g
+npx skills add vtrivedy/swarmory --skill swarmory -g -y
 ```
 
 Then ask your agent to run a swarm. The skill has it install what's missing, write the mission with you, and show you
