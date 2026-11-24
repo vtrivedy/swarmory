@@ -91,8 +91,8 @@ args = ["-c", "model_reasoning_effort=high"]
 
 To add a coding agent that swarmory doesn't build in, give its team.toml entry the `run` and `resume` commands that
 run it headless. Each must contain `{prompt}`, and swarmory fills in `{prompt}`, `{model}`, `{provider}` and
-`{model_id}`. Its model names
-`anthropic/...`, `openai/...` or `gemini/...`, and the command must be on the server's PATH. The gateway serves
+`{model_id}`. Its model is
+`anthropic/...`, `openai/...` or `gemini/...`, and its command must be on the server's PATH. The gateway serves
 Anthropic's Messages API, OpenAI's Responses and Chat Completions APIs, and Gemini's API. The session gets the
 gateway's address and the agent's run token, which the gateway takes in place of a key, in `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY`. The optional

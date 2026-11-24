@@ -52,8 +52,8 @@ This example runs two Claude Code agents for 30 minutes on a $5 budget.
 export PATH="$HOME/.local/bin:$PATH"     # uv, swarmory and claude install here: run this in every new shell
 uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
 swarmory help >/dev/null || uv tool install git+https://github.com/vtrivedy/swarmory
-claude --version || curl -fsSL https://claude.ai/install.sh | bash      # for claude-code agents
-codex --version || npm install -g @openai/codex                         # for codex agents
+claude --version || curl -fsSL https://claude.ai/install.sh | bash      # only for claude-code agents
+codex --version || npm install -g @openai/codex                         # only for codex agents
 git config user.name                                                    # the person's name
 ```
 
@@ -156,8 +156,8 @@ uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'
 uvx modal profile current        # fails with no login: the person runs `uvx modal setup`
 ```
 
-The person runs the rest in their own terminal, since it holds their keys. `deploy` spends Modal compute all the
-time, so ask first.
+The person runs these in their own terminal, since they hold the keys and the token. `deploy` starts a server that
+spends Modal compute all the time.
 
 ```sh
 TOKEN=$(openssl rand -hex 16)    # the operator token: keep it, Modal won't show it again
@@ -174,7 +174,7 @@ with the laptop closed.
 | Update | `uv tool upgrade swarmory`, then `swarmory deploy`. Running agents go on, and the URL stays. |
 | Change a key | The person runs `uvx modal secret create --force swarmory-server ...` with every value and the same token, then `swarmory deploy`. |
 | Stop the server | `swarmory stop RUN` for each run, then `uvx modal app stop swarmory`. Runs stay in `swarmory-data`. |
-| Go back to local | `mv ~/.swarmory/login ~/.swarmory/login.modal`. Move it back to return to Modal. |
+| Go back to local | `mv ~/.swarmory/login ~/.swarmory/login.modal`, then `pkill -f '[s]warmory.cli serve'`. Move the file back to return to Modal. |
 
 ## Keys and models
 
