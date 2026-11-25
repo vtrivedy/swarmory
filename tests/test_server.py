@@ -1,6 +1,7 @@
 """The one server: it exports a run with no token or digest in it, a pasted token included, and `swarmory start` runs a
 whole local run with one command. Agents are the fake harness's, or Stub's workers that run nowhere, and Harbor is a
 stand-in that writes what Harbor writes."""
+import dataclasses
 import io
 import json
 import os
@@ -10,11 +11,16 @@ import socket
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from conftest import OPENER, code, post, soon
 
+from swarmory import cli
+from swarmory.control_plane import verbs
 from swarmory.control_plane.policy import sha
 
 FAKE_LITELLM = Path(__file__).with_name("fake_litellm.py")
@@ -94,6 +100,82 @@ def test_an_export_holds_the_runs_records_and_no_token_or_digest(serve, tmp_path
     assert post(run.url, tokens["ada"], "me")["me"]["id"] == "ada" and code(f"{run.url}/export", tokens["ada"]) == 403
 
 
+def test_a_dry_start_checks_the_run_and_starts_nothing(serve, monkeypatch):
+    served = serve()
+    team = [{"harness": "claude-code"}, {"harness": "codex", "model": "gpt-6.1-sol", "name": "lead"}]
+    budgeted = served("start", mission="hello", team=team, me="vivek", budget=5, dry=True)
+    assert budgeted["status"] == 400 and "give the claude-code agent a model" in budgeted["error"], budgeted
+    dry = served("start", mission="hello", team=team, me="vivek", budget=None, dry=True)
+    assert dry.pop("deadline") > time.time() + 3 * 3600 - 60
+    assert dry == {"dry": True, "server": served.url, "budget": None, "me": "vivek",
+                   "members": [{"id": "ada", "harness": "claude-code", "model": None},
+                               {"id": "lead", "harness": "codex", "model": "gpt-6.1-sol"}]}, dry
+    assert served("runs") == {"runs": []}
+    monkeypatch.delenv("OPENAI_API_KEY")
+    refused = served("start", mission="hello", team=team, me="vivek", dry=True)
+    assert refused["status"] == 400 and "needs OPENAI_API_KEY" in refused["error"], refused
+
+
+def test_a_budgeted_run_refuses_a_model_the_server_cannot_price():
+    from swarmory.control_plane.runs import new_run
+    backend = type("B", (), {"check": lambda self, *a: None})()
+    env = {"OPENAI_API_KEY": "k"}
+    req = {"mission": "m", "team": [{"harness": "codex", "model": "gpt-new"}], "me": "vivek"}
+    owner = lambda m: "openai"  # noqa: E731
+    with pytest.raises(ValueError, match="no price for 'gpt-new'"):
+        new_run({**req, "budget": 5}, backend, env, "t", owner, priced=lambda m: m != "gpt-new")
+    assert new_run({**req, "budget": None}, backend, env, "t", owner, priced=lambda m: False)[0]["budget"] is None
+
+
+def test_a_subscription_run_refuses_another_providers_model():
+    from swarmory.control_plane.runs import new_run
+    backend = type("B", (), {"check": lambda self, *a: None})()
+    req = {"mission": "m", "team": [{"harness": "claude-code", "model": "openai/gpt-6.1-sol"}], "me": "vivek",
+           "subscription": True, "budget": None}
+    with pytest.raises(ValueError, match="calls only anthropic models"):
+        new_run(req, backend, {}, "t", lambda m: m.partition("/")[0], priced=lambda m: True)
+
+
+def test_start_takes_a_budget_in_dollars_or_none():
+    assert cli.budget_arg("5") == 5.0 and cli.budget_arg("None") is None
+    with pytest.raises(SystemExit):
+        cli.start(["mission"])  # no --budget
+
+
+def test_a_dry_start_on_a_server_without_dry_runs_stops_what_it_started(serve, tmp_path, monkeypatch):
+    served, old = serve(), verbs.VERBS["start"]
+    monkeypatch.setitem(verbs.VERBS, "start", dataclasses.replace(  # an older server, which ignores dry
+        old, call=lambda server, req, token: old.call(server, {k: v for k, v in req.items() if k != "dry"}, token)))
+    monkeypatch.setattr(cli, "LOGIN", str(tmp_path / "login"))
+    (tmp_path / "login").write_text(json.dumps({"url": served.url, "token": served.token}))
+    folder = tmp_path / "hello"
+    folder.mkdir()
+    (folder / "BRIEF.md").write_text("# Say hello\n")
+    with pytest.raises(SystemExit, match="is older than this swarmory"):
+        cli.start_run(folder, [{"harness": "claude-code"}], dry=True)
+    assert [r["state"] for r in served("runs")["runs"]] == ["stopped"]
+
+
+def test_a_start_refused_a_key_this_shell_has_says_to_restart_the_local_server(serve, tmp_path, monkeypatch):
+    served = serve()
+
+    def refuse(*_):  # what a server started without the key answers
+        raise ValueError("The claude-code agent on its default model needs ANTHROPIC_API_KEY, which the server's "
+                         "environment does not have.")
+    monkeypatch.setitem(verbs.VERBS, "start", dataclasses.replace(verbs.VERBS["start"], call=refuse))
+    monkeypatch.setattr(cli, "LOGIN", str(tmp_path / "login"))
+    (tmp_path / "login").write_text(json.dumps({"url": served.url, "token": served.token}))
+    folder = tmp_path / "hello"
+    folder.mkdir()
+    (folder / "BRIEF.md").write_text("# Say hello\n")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
+    with pytest.raises(SystemExit, match="This shell has ANTHROPIC_API_KEY, but the local server started without it"):
+        cli.start_run(folder, [{"harness": "claude-code"}], dry=True)
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    with pytest.raises(cli.Refused, match="needs ANTHROPIC_API_KEY"):
+        cli.start_run(folder, [{"harness": "claude-code"}], dry=True)
+
+
 def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp_path, monkeypatch):
     """`swarmory start`, with no server answering at the login, starts `swarmory serve` in the background and the run,
     and pushes the mission, which starts the agent. Then as the operator: a message wakes the agent, the agent's
@@ -120,7 +202,7 @@ def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp
     folder = mission(tmp_path)
     (folder / "team.toml").write_text('[[agent]]\nharness = "fake"\n')
     try:
-        said = swarmory("start", str(folder), "--hours", "0.2", "--jobs")
+        said = swarmory("start", str(folder), "--hours", "0.2", "--budget", "none", "--jobs")
         assert f"No server answers at {url}: starting one here" in said and "the agents are starting" in said, said
         rid = json.loads((tmp_path / "op-login").read_text())["run"]
         assert swarmory("use", rid) == f"`swarmory` now acts in {rid}.\n"

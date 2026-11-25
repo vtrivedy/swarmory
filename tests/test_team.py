@@ -118,15 +118,16 @@ def test_the_seed_is_the_mission_less_its_secrets_and_what_its_gitignore_ignores
     (mission / ".gitignore").write_text("*.log\n")
     (tmp_path / "outside").write_text("x")
     (mission / "link").symlink_to(tmp_path / "outside")
-    (mission / "skill").symlink_to(seed.HERE / "skills" / "swarmory")  # swarmory's own skills may be linked
+    (mission / ".agents" / "skills" / "s").mkdir(parents=True)  # as `npx skills add` installs a skill in a mission
+    (mission / ".agents" / "skills" / "s" / "SKILL.md").write_text("x")
+    (mission / ".claude" / "skills").mkdir(parents=True)
+    (mission / ".claude" / "skills" / "s").symlink_to("../../.agents/skills/s")
     seed.make_seed(mission, run.url, served.token)
     work = tmp_path / "w"
     remote = run.url.replace("://", f"://vivek:{served.token}@") + "/git/work.git"
     subprocess.run(["git", "clone", "-q", remote, str(work)], check=True, capture_output=True)
-    skill = sorted("skill/" + str(f.relative_to(seed.HERE / "skills" / "swarmory"))
-                   for f in (seed.HERE / "skills" / "swarmory").rglob("*") if f.is_file())
-    assert sorted(git_in(work, "ls-files").split()) == [".gitignore", "BRIEF.md", "check.sh", "lib/x.py", *skill]
-    assert "skill/SKILL.md" in skill
+    skill = [".agents/skills/s/SKILL.md", ".claude/skills/s/SKILL.md"]
+    assert sorted(git_in(work, "ls-files").split()) == sorted([".gitignore", "BRIEF.md", "check.sh", "lib/x.py", *skill])
 
 
 def busy(t: Team):

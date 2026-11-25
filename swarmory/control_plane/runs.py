@@ -299,10 +299,11 @@ def write(path: Path, obj):
     os.replace(f"{path}.tmp", path)
 
 
-def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
+def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple:
     """(the config of a new run, its view token) for a `start` request, checked. `operator` is the token of whoever
     asked, which the view token is made from. `owner` gives the provider that serves a model, whose key an agent
-    on that model needs. A ValueError says what is wrong in one line."""
+    on that model needs. `priced` says whether the server's price table lists a model: a budgeted run's gateway
+    refuses every call to a model it can't price. A ValueError says what is wrong in one line."""
     mission, (hours, budget) = req.get("mission"), limits(req)
     team, grants, allow = req.get("team"), req.get("grant") or [], req.get("allow") or []
     me, jobs, subscription = req.get("me") or "operator", req.get("jobs") or False, bool(req.get("subscription"))
@@ -350,6 +351,11 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
                          "It comes from your git user.name.")
     used = list({m["harness"]: harness.of(m) for m in team}.values())
     backend.check(used, grants, allow)
+    for m in team if subscription else ():  # a login calls only its own provider: no call is translated
+        h, provider = harness.of(m), owner(m.get("model") or None)
+        if h.login and provider and provider != h.provider:
+            raise ValueError(f"With --subscription, a {h.name} agent calls only {h.provider} models, and "
+                             f"{m['model']} is {provider}'s: pick one of {h.provider}'s models, or run with API keys.")
     for h in used if subscription else ():
         if not h.login:
             raise ValueError(f"The team has {h.name} agents, which take no subscription login: run without it.")
@@ -357,6 +363,14 @@ def new_run(req: dict, backend, env, operator: str, owner) -> tuple:
         if not login or (login.expires or float("inf")) < time.time() + hours * 3600:
             raise ValueError(f"The team has {h.name} agents, so the server's {h.login} must be {h.login_from}, good "
                              "until the run ends.")
+    for m in team if budget is not None and priced else ():  # else every call of that agent's is refused, mid-run
+        if not m.get("model"):
+            raise ValueError(f"The run has a budget, so give the {m['harness']} agent a model, such as "
+                             f"{m['harness']}:MODEL, whose price the server can check.")
+        if not priced(m["model"]):
+            raise ValueError(f"The run has a budget, and the server has no price for {m['model']!r}, so the gateway "
+                             "would refuse every call to it. Pick a model LiteLLM's price table lists, or run with "
+                             "--budget none.")
     for m in () if subscription else team:  # else every model call of that agent's fails with the gateway's 503
         key = f"{(owner(m.get('model') or None) or harness.of(m).provider).upper()}_API_KEY"
         if not env.get(key):
