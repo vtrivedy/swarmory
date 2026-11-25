@@ -225,7 +225,8 @@ def started_text(r: dict, req: dict) -> str:
     if r.get("dry"):
         return "\n".join([f"server  {r['server']}",
                           f"until   {time.strftime('%H:%M %Z', time.localtime(r['deadline']))}",
-                          "budget  " + ("none" if r["budget"] is None else money(r["budget"])), f"you     {r['me']}",
+                          "budget  " + ("none: model calls have no limit" if r["budget"] is None
+                                        else money(r["budget"])), f"you     {r['me']}",
                           *(f"agent   {m['id']:10} {m['harness']:13} {m['model'] or 'its default model'}"
                             for m in r["members"]),
                           "Dry run: nothing started."])
@@ -312,7 +313,8 @@ def find(server, req: dict):
 
 
 def start(server, req: dict, token: str) -> dict:
-    config, view = new_run(req, server.backend, os.environ, token, lambda m: server.litellm.find(m)[0])
+    priced = (lambda m: server.litellm.find(m)[1] is not None) if server.litellm.table else None
+    config, view = new_run(req, server.backend, os.environ, token, lambda m: server.litellm.find(m)[0], priced)
     if req.get("dry"):
         return {"dry": True, "server": server.url, "deadline": config["deadline"],
                 "budget": config["budget"], "me": config["operator"],

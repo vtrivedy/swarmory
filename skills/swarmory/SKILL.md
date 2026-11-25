@@ -10,7 +10,7 @@ description: Set up, run, watch and improve a team of coding agents with swarmor
 swarmory runs a team of coding agents on one mission. You set it up for a person, write the mission with them, start
 the run, watch it, and improve the next run.
 
-- Repo: https://github.com/vtrivedy/swarmory (README, examples, issues)
+- Repo: https://github.com/vtrivedy/swarmory (README, issues)
 - CLI: `uv tool install git+https://github.com/vtrivedy/swarmory`, update with `uv tool upgrade swarmory`
 - This skill: `npx skills add vtrivedy/swarmory --skill swarmory -g -y`, which also updates it
 
@@ -105,10 +105,16 @@ One agent writes wc.py and the other writes the tests. Each pushes small commits
 swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
 ```
 
-`--hours` takes decimals: 0.5 is 30 minutes. Repeat `--team` to mix agents, such as `--team
-claude-code:claude-sonnet-5-5=2 --team codex:gpt-6.1-sol=2`. The dry run starts the local server if none is running,
-checks the run, and starts nothing. If a key, login or coding agent is missing on the server, local or Modal, it exits
-non-zero and names it. It checks that a key is set, not that it works. On success it prints something like:
+`--hours` takes decimals: 0.5 is 30 minutes, and the default is 3. Repeat `--team` to mix agents, such as
+`--team claude-code:claude-sonnet-5-5=2 --team codex:gpt-6.1-sol=2`.
+
+`--budget` is required: dollars at list prices, or `none` for no limit, which only the person may choose. With a
+budget, the server refuses every call to a model missing from LiteLLM's price table, so the dry run refuses such a
+model. If the person wants a model that new, pick a listed one, or ask them about `--budget none`.
+
+The dry run starts the local server if none is running, checks the run, and starts nothing. If a key, login, coding
+agent or price is missing on the server, local or Modal, it exits non-zero and names it. It checks that a key is set,
+not that it works. On success it prints something like:
 
 ```
 No server answers at http://127.0.0.1:7700: starting one here (`swarmory serve`, its output in ~/.swarmory/serve.log)...
@@ -208,6 +214,9 @@ uv tool install --force 'swarmory[modal] @ git+https://github.com/vtrivedy/swarm
 swarmory deploy                  # prints the server's URL
 ```
 
+The first `deploy` builds the agents' image and takes several minutes; later ones take seconds. Run it in the
+background or with a timeout of 15 minutes, so a slow build isn't mistaken for a failure.
+
 Last, the person logs in from that same terminal, with the URL `deploy` printed:
 
 ```sh
@@ -247,6 +256,12 @@ and needs the login of each one the team uses:
 |---|---|---|
 | `claude-code` | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` |
 | `codex` | `CODEX_AUTH_JSON` | `export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"`, after `codex login` |
+
+Every agent draws on the plan's usage limits, which the person's own Claude or ChatGPT use shares, so a big team can
+use them up for hours. Tell the person, and start with 2 to 4 agents. When a limit is hit, an agent's session fails,
+and it tries again a minute later until the deadline. After two failures in a row it starts a fresh conversation, with
+its clone, the board and the chat as they were. In `swarmory status`, such an agent's sessions climb while its calls don't. Stop
+the run, or wait for the limit to reset. Teams larger than 4 haven't been tested on a plan.
 
 The person puts each key or login in their shell profile, such as `~/.zshrc`, or on Modal in the `swarmory-server`
 secret. Check one is set without printing it:

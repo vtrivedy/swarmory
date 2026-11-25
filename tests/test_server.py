@@ -114,6 +114,23 @@ def test_a_dry_start_checks_the_run_and_starts_nothing(serve, monkeypatch):
     assert refused["status"] == 400 and "needs OPENAI_API_KEY" in refused["error"], refused
 
 
+def test_a_budgeted_run_refuses_a_model_the_server_cannot_price():
+    from swarmory.control_plane.runs import new_run
+    backend = type("B", (), {"check": lambda self, *a: None})()
+    env = {"OPENAI_API_KEY": "k"}
+    req = {"mission": "m", "team": [{"harness": "codex", "model": "gpt-new"}], "me": "vivek"}
+    owner = lambda m: "openai"  # noqa: E731
+    with pytest.raises(ValueError, match="no price for 'gpt-new'"):
+        new_run({**req, "budget": 5}, backend, env, "t", owner, priced=lambda m: m != "gpt-new")
+    assert new_run({**req, "budget": None}, backend, env, "t", owner, priced=lambda m: False)[0]["budget"] is None
+
+
+def test_start_takes_a_budget_in_dollars_or_none():
+    assert cli.budget_arg("5") == 5.0 and cli.budget_arg("None") is None
+    with pytest.raises(SystemExit):
+        cli.start(["mission"])  # no --budget
+
+
 def test_a_dry_start_on_a_server_without_dry_runs_stops_what_it_started(serve, tmp_path, monkeypatch):
     served, old = serve(), verbs.VERBS["start"]
     monkeypatch.setitem(verbs.VERBS, "start", dataclasses.replace(  # an older server, which ignores dry
@@ -174,7 +191,7 @@ def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp
     folder = mission(tmp_path)
     (folder / "team.toml").write_text('[[agent]]\nharness = "fake"\n')
     try:
-        said = swarmory("start", str(folder), "--hours", "0.2", "--jobs")
+        said = swarmory("start", str(folder), "--hours", "0.2", "--budget", "none", "--jobs")
         assert f"No server answers at {url}: starting one here" in said and "the agents are starting" in said, said
         rid = json.loads((tmp_path / "op-login").read_text())["run"]
         assert swarmory("use", rid) == f"`swarmory` now acts in {rid}.\n"

@@ -618,6 +618,16 @@ def start_run(mission, team=None, **options) -> dict:
     return r
 
 
+def budget_arg(s: str):
+    """--budget: dollars, or `none` for a run with no limit, which must be said, never assumed."""
+    if s.lower() == "none":
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("give dollars, such as 5, or none for no limit") from None
+
+
 def start(argv):
     names = ", ".join(h.name for h in harness.HARNESSES)
     p = argparse.ArgumentParser(prog="swarmory start", description="Starts a run of a mission: a team of coding "
@@ -629,8 +639,9 @@ def start(argv):
                    help=f"{names}; repeatable (default: the mission's team.toml, else two of the first)")
     p.add_argument("--hours", type=float, default=HOURS,
                    help=f"how long the run lasts, in hours: 0.5 is 30 minutes ({HOURS})")
-    p.add_argument("--budget", type=float, metavar="USD", help="the most the run's model calls may cost, in dollars; "
-                   "a budgeted run refuses a call to a model that has no listed price, so name each agent's model")
+    p.add_argument("--budget", type=budget_arg, metavar="USD", required=True,
+                   help="the most the run's model calls may cost, in dollars at list prices, or `none` for no limit. "
+                   "A budgeted run refuses a model that has no listed price, which the dry run checks")
     p.add_argument("--grant", action="append", metavar="NAME", help="give every agent NAME: a variable of a local "
                    "server's environment, or a Modal secret; repeatable")
     p.add_argument("--allow", action="append", metavar="HOST", help="on Modal, let agents reach HOST too; repeatable")

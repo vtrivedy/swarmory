@@ -24,7 +24,7 @@ PY=$(uv run -q $extra python -c 'import sys; print(sys.executable)') || exit 1  
 swarmory() { "$PY" -m swarmory.cli "$@"; }
 say() { echo "e2e $(date +%H:%M:%S) $*"; }
 data=$(mktemp -d "${TMPDIR:-/tmp}/e2e.XXXXXX")  # locally the server's data; on Modal the export and logs
-args=(start tests/mission --hours 0.4)
+args=(start tests/mission --hours 0.4 --budget 5)
 [ -n "${E2E_SUBSCRIPTION:-}" ] && args+=(--subscription)
 for t in ${E2E_TEAM:-claude-code:claude-haiku-5-5=1 codex:gpt-6.1-sol=1}; do args+=(--team "$t"); done
 run="" server=""

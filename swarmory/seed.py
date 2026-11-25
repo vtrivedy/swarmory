@@ -1,7 +1,7 @@
 """The seed: a mission folder pushed to a new run as the first commit on main, which is what starts its agents. The
 client does this after `start`, from the machine that has the mission, with the operator token. Symlinks are copied as
-files, and what withheld() names never reaches the team: secrets, links out of the mission folder but to a skill, a
-.git, and what the mission's own .gitignore ignores."""
+files, and what withheld() names never reaches the team: secrets, links out of the mission folder, a .git, and
+what the mission's own .gitignore ignores."""
 import fnmatch
 import os
 import shutil
@@ -21,12 +21,11 @@ def plain_env(**extra) -> dict:
 
 
 def private(mission: Path, rel: Path) -> bool:
-    """rel, in the mission folder, is a secret by its name or its link's target's (PRIVATE), or links out of it to
-    anywhere but a skill: a folder with a SKILL.md, such as one `npx skills add` installed."""
+    """rel, in the mission folder, is a secret by its name or its link's target's (PRIVATE), or links out of it. The
+    skills `npx skills add` installs in a mission stay in it: .agents/skills, and .claude/skills links to that."""
     real = (mission / rel).resolve()
-    skill = any((d / "SKILL.md").is_file() for d in (real, *real.parents))
     return (any(fnmatch.fnmatch(n, g) for n in (rel.name, real.name) for g in PRIVATE)
-            or not (real.is_relative_to(mission) or skill))
+            or not real.is_relative_to(mission))
 
 
 def withheld(mission: Path, rel: Path) -> bool:

@@ -59,7 +59,7 @@ run `start` again.
 Each `--team` is `HARNESS[:MODEL]=COUNT`. Repeat it to mix agents.
 
 ```sh
-swarmory start MISSION --team claude-code:claude-sonnet-5-5=4 --team codex:gpt-6.1-sol=4 --team pi:openai/gpt-6-luna=4
+swarmory start MISSION --budget 20 --team claude-code:claude-sonnet-5-5=4 --team codex:gpt-6.1-sol=4 --team pi:openai/gpt-6-luna=4
 ```
 
 | Harness | Coding agent | Model |
@@ -111,12 +111,12 @@ setup = "sh my-agent-config.sh"   # a file of the mission
 | Option | What it does |
 |---|---|
 | `--hours H` | How long the run lasts. The default is 3. |
-| `--budget USD` | The server refuses model calls past this spend. |
+| `--budget USD` | Required. The server refuses model calls past this spend, at list prices. `none` sets no limit. With a budget, every model must be in LiteLLM's price table, which the dry run checks. |
 | `--dry-run` | Check the run and print it, but start nothing. |
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
 | `--allow HOST` | On Modal, let agents reach `HOST` too. |
-| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. The `eval-factory` skill and [examples/eval-factory](examples/eval-factory) build such evals. |
+| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. The `eval-factory` skill builds such evals. |
 
 ## How agents work
 
@@ -148,7 +148,7 @@ The team's work is a git repo. On a local server, `git clone ~/.swarmory/data/ru
 ```sh
 export CLAUDE_CODE_OAUTH_TOKEN=...
 export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"
-swarmory start MISSION --subscription
+swarmory start MISSION --budget 5 --subscription
 ```
 
 `claude setup-token` prints the first value. On Modal, put both in the `swarmory-server` secret instead. The server
