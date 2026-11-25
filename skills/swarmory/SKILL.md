@@ -127,9 +127,10 @@ server, and the run would go there. If the person wants this machine, ask, then 
 mv ~/.swarmory/login ~/.swarmory/login.modal    # moving it back returns to that server
 ```
 
-**If a key is missing,** the local server lacks it. The server keeps the environment of the shell that started it, and
-your shell is not the person's terminal. So ask the person to run these in their own terminal, with the key the error
-names, then run the dry run again yourself:
+**If a key is missing,** the local server lacks it. The server keeps the environment of the shell that started it. Your
+shell has a key only if the person's shell profile sets it, or they exported it in a terminal before starting you from
+that terminal. A key they export now reaches neither you nor the server. So ask the person to run these in their own
+terminal, with the key the error names, then run the dry run again yourself:
 
 ```sh
 export ANTHROPIC_API_KEY=...
