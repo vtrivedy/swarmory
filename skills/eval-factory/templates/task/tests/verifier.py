@@ -18,7 +18,7 @@ def record(reward, failed_check, checks, partial=0.0):
 
 
 def grade(output_dir, key, hardening=True):
-    """The record for one submission. `hardening=False` exists only so tests can prove an exploit was real."""
+    """Return the grade record for one submission. `hardening=False` exists only so tests can prove an exploit was real."""
     answer = Path(output_dir) / "answer.txt"
     if not answer.is_file() or answer.is_symlink():
         return record(0.0, "answer_file", [{"id": "answer_file", "passed": False}])
@@ -31,9 +31,11 @@ def grade(output_dir, key, hardening=True):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if hardening and len(lines) != 1:
         return record(0.0, "one_answer", [{"id": "one_answer", "passed": False, "value": len(lines)}])
-    correct = key["answer"] in lines
-    return record(float(correct), None if correct else "answer", [{"id": "answer", "passed": correct}],
-                  float(correct))
+    checks = [{"id": "answer", "passed": key["answer"] in lines},
+              {"id": "nothing_else_written", "passed": sorted(p.name for p in Path(output_dir).iterdir()) == ["answer.txt"]}]
+    passed = [c["passed"] for c in checks]
+    failed = next((c["id"] for c in checks if not c["passed"]), None)
+    return record(float(all(passed)), failed, checks, sum(passed) / len(passed))
 
 
 def write(result, verifier_dir):

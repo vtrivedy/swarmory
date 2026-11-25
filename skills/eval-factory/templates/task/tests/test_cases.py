@@ -1,6 +1,6 @@
 """The verifier is right in both directions: every stored case scores what its expected.json says."""
 import json
-from numbers import Number
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -22,12 +22,16 @@ def test_case_scores_expected(case):
     assert result["reward"] == expected["reward"]
     if "failed_check" in expected:
         assert result["failed_check"] == expected["failed_check"]
+    if "partial_score" in expected:
+        assert result["partial_score"] == expected["partial_score"]
     if "reward_without_hardening" in expected:
         assert grade(case / "output", KEY, hardening=False)["reward"] == expected["reward_without_hardening"]
 
 
-def test_empty_and_reference_cases_exist():
-    assert {"empty", "reference"} <= {case.name for case in CASES}
+def test_required_cases_exist():
+    names = {case.name for case in CASES}
+    assert {"empty", "reference", "alternative", "garbage", "near-miss", "side-effect"} <= names
+    assert any(name.startswith("exploit-") for name in names)  # the cheapest shortcut, written as code
 
 
 def test_instruction_states_every_graded_rule():
@@ -35,12 +39,14 @@ def test_instruction_states_every_graded_rule():
     assert "/app/output/answer.txt" in instruction
     assert "exactly one line" in instruction
     assert "not a link" in instruction  # the verifier rejects a symlinked answer
+    assert "Write nothing" in instruction  # the verifier fails any other file in /app/output
+    assert "1 MiB" in instruction  # the verifier fails a larger answer
 
 
 def test_reward_json_is_numbers_only(tmp_path):
     write(grade(HERE / "cases/reference/output", KEY), tmp_path)
     reward = json.loads((tmp_path / "reward.json").read_text())
-    assert reward and all(isinstance(v, Number) for v in reward.values())
+    assert reward and all(type(v) in (int, float) and math.isfinite(v) for v in reward.values())
     assert json.loads((tmp_path / "grade.json").read_text())["checks"]
 
 

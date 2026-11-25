@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run inside the built image as the solver's user, before any paid attempt. Prints one JSON line per check.
+# Run inside the built image as the solver's user, before any model run. Prints one JSON line per check.
 set -u
 status=0
 
@@ -17,7 +17,7 @@ python3 -c 'import urllib.request; urllib.request.urlopen("http://example.com", 
 	&& blocked "network_off_http" "solver fetched http://example.com" || ok "network_off_http"
 ls /logs/verifier/reward.* >/dev/null 2>&1 && blocked "no_reward_file" "a reward file exists" || ok "no_reward_file"
 writable=$(find / \( -path /proc -o -path /sys \) -prune -o -type s -writable -print 2>/dev/null | head -n 5)
-[ -z "$writable" ] && ok "no_writable_sockets" || blocked "no_writable_sockets" "$(echo $writable)"
+[ -z "$writable" ] && ok "no_writable_sockets" || blocked "no_writable_sockets" "$(echo $writable | tr -d '"\\')"
 test -w /app/output && ok "output_writable" || blocked "output_writable" "solver cannot write /app/output"
 
 exit $status

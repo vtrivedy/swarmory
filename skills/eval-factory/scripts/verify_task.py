@@ -5,11 +5,14 @@ Run it with the Python that has Harbor installed, so `harbor` and `modal` resolv
 
     python verify_task.py doctor tasks/<task-name>
     python verify_task.py free tasks/<task-name> --endpoint https://<endpoint host>/anthropic \\
-        --harness claude-code=anthropic/<model> --harness codex=openai/<model> [--out <evidence folder>]
+        --harness claude-code=anthropic/<model> --harness codex=openai/<model> [--smoke-model <model>] \\
+        [--out <evidence folder>]
     python verify_task.py cleanup <evidence folder> [--dry-run]
 
-`free` writes <evidence folder>/summary.json, summary.md, one log per check and every Harbor job under jobs/. It
-exits 1 if any check fails. `cleanup` stops only the Modal sandboxes whose trials are in that evidence folder.
+`doctor` changes nothing. It checks the Harbor version, task.toml, the helper files, Modal auth, and that the task folder
+is committed. `free` writes <evidence folder>/summary.json, summary.md, one log per check, and every Harbor job under
+jobs/. It exits 1 if any check fails. `cleanup` stops only the Modal sandboxes whose trials are in that evidence
+folder.
 """
 import argparse
 import json
@@ -27,7 +30,6 @@ from urllib.parse import urlparse
 HERE = Path(__file__).resolve().parent
 MODEL_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
 HARBOR_APP = "__harbor__"
-SMOKE_MODEL = "claude-haiku-5-5"  # bare: with ANTHROPIC_BASE_URL set, Harbor sends it as written
 CACHE_PARTS = {"__pycache__", ".pytest_cache"}
 
 
@@ -218,9 +220,9 @@ def committed_row(state):
 
 def smoke_command(task, evidence, args):
     host = urlparse(args.endpoint).hostname if args.endpoint else "<model endpoint host>"
-    return (f"harbor run -p {task} -a claude-code -m {SMOKE_MODEL} -k 1 -n 1 --env modal "
+    return (f"harbor run -p {task} -a claude-code -m {args.smoke_model} -k 1 -n 1 --env modal "
             f"--allow-environment-host {host} --ae 'ANTHROPIC_BASE_URL={args.endpoint or '<endpoint>'}' "
-            f"--ae 'ANTHROPIC_API_KEY=${{ROUTE_KEY}}' --job-name smoke -o {evidence / 'jobs'}")
+            f"--ae 'ANTHROPIC_API_KEY=${{ENDPOINT_API_KEY}}' --job-name smoke -o {evidence / 'jobs'}")
 
 
 def write_summary(evidence, meta, rows):
@@ -228,11 +230,11 @@ def write_summary(evidence, meta, rows):
     lines = [f"# Free checks: {meta['task_name']}", "",
              (f"Task `{meta['task']}` at commit {meta['git']['commit']} (dirty: {meta['git']['dirty']}), "
               f"Harbor {meta['harbor_version']}, {meta['started']} to {meta['finished']}."), "",
-             "| Check | Status | Detail | Job |", "|---|---|---|---|"]
+             "| Check | Status | Detail | Job | Proof |", "|---|---|---|---|---|"]
     lines += [f"| {r['check']} | {r['status']} | {r['detail'].replace('|', '/')} | "
-              f"{Path(r['job']).relative_to(evidence) if r['job'] else ''} |" for r in rows]
+              f"{Path(r['job']).relative_to(evidence) if r['job'] else ''} | {r.get('proof') or ''} |" for r in rows]
     lines += ["", "summarize_runs.py, one job at a time:", "", "```", *meta["summarize_runs"], "```"]
-    lines += ["", "Not run: the smoke run calls a model. Ask the run owner before running:", "", "```bash",
+    lines += ["", "Not run: the smoke run calls a model. Run it next:", "", "```bash",
               meta["smoke_command"], "```", ""]
     (evidence / "summary.md").write_text("\n".join(lines))
 
@@ -348,6 +350,8 @@ def main(argv=None):
     run.add_argument("--harness", action="append", default=[], metavar="AGENT=MODEL",
                      help="a harness to install-check, such as claude-code=anthropic/<model>; repeatable")
     run.add_argument("--pytest", default="uvx pytest", help="command that runs the task's own tests")
+    run.add_argument("--smoke-model", default="<a small model from the endpoint's model list>",
+                     help="model for the smoke-run command written to summary.md, exactly as the endpoint lists it")
     run.add_argument("--oracle-threshold", type=float, default=1.0, help="reward the oracle must reach")
     clean = sub.add_parser("cleanup")
     clean.add_argument("evidence")

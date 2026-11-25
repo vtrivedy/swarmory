@@ -5,7 +5,7 @@
 
 Prints one JSON line per check, {"check", "status": "ok" or "fail", "detail"}, and exits 1 if any check fails.
 The last check runs the task's verifier on its stored reference case the way the template's test.sh does:
-`python3 -I tests/verifier.py tests/cases/reference/output <verifier dir>`. Needs Python 3.11 or later.
+`python3 -I tests/verifier.py tests/cases/reference/output <verifier dir>`. It needs Python 3.11 or later.
 """
 import json
 import math
@@ -77,8 +77,8 @@ NETWORK_KEYS = ("network_mode", "allowed_hosts", "allow_internet")
 
 
 def unsealed(toml, where=""):
-    """What a swarmory job refuses in a task.toml, as swarmory/harbor.py's seal() does: an environment that isn't
-    no-network, a network setting on an agent or verifier phase, or a `${...}` value in an env table."""
+    """What keeps a task.toml from being sealed: an environment that isn't no-network, a network setting on an agent
+    or verifier phase, or a `${...}` value in an env table."""
     found = []
     if isinstance(toml, list):
         for i, item in enumerate(toml):
@@ -111,12 +111,12 @@ def unsealed(toml, where=""):
     return found
 
 
-def check_swarmory_job_sealed(task, toml):
+def check_sealed(task, toml):
     bad = unsealed(toml) + [f"{p.relative_to(task)} exists, and a job runs one container from a Dockerfile"
                             for p in sorted(task.rglob("docker-compose.yaml"))]
     if not bad:
-        return True, "sealed: a swarmory job accepts it"
-    return False, "can't run as a swarmory job, which needs every environment no-network: " + "; ".join(bad)
+        return True, "sealed: every environment is no-network"
+    return False, "not sealed, which a run with no network needs: " + "; ".join(bad)
 
 
 def copied_sources(dockerfile):
@@ -186,7 +186,7 @@ def check_reference_reward_numeric(task, toml):
 
 CHECKS = [check_schema_version, check_verifier_separate, check_verifier_dockerfile, check_verifier_not_solver,
           check_agent_user, check_dockerfile_user, check_image_has_no_task_files, check_solver_network_narrow,
-          check_swarmory_job_sealed, check_artifacts_declared, check_test_sh_wipes_reward, check_reference_reward_numeric]
+          check_sealed, check_artifacts_declared, check_test_sh_wipes_reward, check_reference_reward_numeric]
 
 
 def lint(task):
@@ -208,7 +208,7 @@ def lint(task):
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
+    if len(args) != 1 or args[0] in ("-h", "--help"):
         sys.exit(__doc__)
     rows = lint(args[0])
     for row in rows:

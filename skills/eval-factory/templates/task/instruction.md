@@ -4,4 +4,5 @@ partial credit.
 
 <A short brief in a colleague's voice: what they need, where the inputs are, and where the result goes.>
 
-Write your answer to `/app/output/answer.txt`, a regular file and not a link, as exactly one line.
+Write your answer to `/app/output/answer.txt`, a regular file of at most 1 MiB and not a link, as exactly one line.
+Write nothing else in `/app/output`.
