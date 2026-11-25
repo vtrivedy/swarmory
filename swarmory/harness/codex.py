@@ -23,11 +23,12 @@ class Codex:
         return {"SWARMORY_TOKEN": llm.token}  # the variable prepare's config names as the key
 
     def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
-        """Points it at the gateway, which it takes only from its config file, and adds the hook that delivers
-        messages between tool calls."""
+        """Points it at the gateway, which it takes only from its config file, has it read no AGENTS.md, and adds the
+        hook that delivers messages between tool calls."""
         config = Path.home() / self.home / "config.toml"
         config.parent.mkdir(parents=True, exist_ok=True)
-        config.write_text('model_provider = "swarmory"\n[model_providers.swarmory]\nname = "swarmory"\n'
+        config.write_text('model_provider = "swarmory"\nproject_doc_max_bytes = 0\n'
+                          '[model_providers.swarmory]\nname = "swarmory"\n'
                           f'base_url = "{llm.url}/openai/v1"\nenv_key = "SWARMORY_TOKEN"\nwire_api = "responses"\n'
                           "supports_websockets = false\n")
         (config.parent / "hooks.json").write_text(json.dumps({"hooks": INBOX}) + "\n")

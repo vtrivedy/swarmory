@@ -136,8 +136,9 @@ its data folder. Read `server.log` there, and in `runs/RUN/members/<id>/` each a
 
 Ask what they want built and how to check it. Make a folder anywhere. The run's name starts with the folder's name.
 
-Swarmory tells each agent only the facts of its setup. How the team works is the mission's choice, and it goes in
-a "How we work" section of BRIEF.md, with each agent's role in team.toml. Start from
+Each agent's starting prompt gives it a default way to work as a team: issues, claims, small commits pushed often,
+and review. BRIEF.md wins over that default. To change how the team works, write it in a "How we work" section of
+BRIEF.md, with each agent's role in team.toml. Start from
 [playbooks/team.md](playbooks/team.md), and read
 [references/research.md](references/research.md) for what is known to help or hurt a team.
 
@@ -145,7 +146,8 @@ a "How we work" section of BRIEF.md, with each agent's role in team.toml. Start 
 <name>/
   BRIEF.md     required: what every agent reads first: the goal, how to check it, and how the team works
   ...          starting code, data, reference binaries, docs
-  skills/      skills the agents read (a link into a skills/ folder of the swarmory checkout works)
+  skills/      skills/NAME/SKILL.md: each agent's coding agent has them as its own skills, and the starting prompt
+               lists each by its path (a link into a skills/ folder of the swarmory checkout works)
   team.toml    optional: each agent's harness, model, role, name and CLI args (--team overrides them); any
                other coding agent with its run, resume and setup commands (README.md)
   setup.sh     optional: installs tools, and must be safe to run twice
@@ -157,8 +159,11 @@ Everything in the folder reaches the agents, so leave out answers and private no
 out what the mission's `.gitignore` ignores, `.env`, `.env.*`, `*.pem` and `*.key` files, and symlinks that point
 outside the mission, and says what it left out. A symlink inside the mission arrives as a copy of its file.
 
-`setup.sh` runs in each agent's clone before its first session, locally and on Modal alike. It must work on the
-person's machine and in a Debian sandbox.
+`setup.sh` runs in each agent's clone every time its worker starts, before its next session, locally and on Modal
+alike: a restarted Modal sandbox keeps only HOME and the clone. It must work on the person's machine and in a Debian
+sandbox. If it fails, the agent's next session is told so, with the end of its output. On Modal it reaches only the
+run's hosts, so start the run with `--allow` for each host it installs from. The eval-factory mission's setup.sh
+installs from PyPI: `--allow pypi.org --allow files.pythonhosted.org`.
 
 ## 4. Start
 
@@ -186,8 +191,8 @@ A local run's folder is `~/.swarmory/data/runs/RUN`: `log.jsonl` holds every eve
 transcript session by session: the messages that woke it, its reasoning, each tool call with its result, and the
 messages it sent.
 
-`swarmory wait --timeout S` returns when someone DMs, @mentions or replies to the person, or after S seconds, with what
-changed since the last wait. Use it both to answer agents and to check in.
+`swarmory wait --timeout S` returns when someone DMs, @mentions or replies to the person, or after S seconds (at most
+120), with what changed since the last wait. Use it both to answer agents and to check in.
 
 During a run, send few messages. An agent may ignore a message. When the team keeps ignoring one, change the next
 run's team or brief instead. What you send goes out under the person's name, so agree with them on what you'll handle

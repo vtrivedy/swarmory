@@ -4,7 +4,8 @@ not), prices them from LiteLLM's price table (litellm.py), and writes them to th
 the routes in ROUTES: Anthropic's Messages, OpenAI's Responses and Chat Completions, and Gemini's generateContent,
 streamGenerateContent and countTokens, so a coding agent that speaks any of them can use it. A model of another
 provider than the route's, named <provider>/<model> or by a bare name the price table lists under that provider, goes
-to LiteLLM, which translates the call. Each call is refused once the run or its job has spent its budget.
+to LiteLLM, which translates the call. Each call is refused once the run or its job has spent its budget. When a
+provider answers a member's call with a rate limit, the gateway notes until when, for the member's worker to pause.
 
 litellm.py names the variables with the providers' API keys and upstreams. A run with subscriptions calls with the
 person's logins instead, the way each harness calls when it holds its login itself: each harness's file in
@@ -13,11 +14,13 @@ or login that isn't set turns that API off.
 """
 import http.client
 import json
+import math
 import os
 import re
 import threading
 import time
 import zlib
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -50,6 +53,8 @@ ROUTES = {  # (provider, method, path) -> whether it is a model call, recorded i
     ("gemini", "POST", "v1beta/models/*:countTokens"): False,
     ("gemini", "GET", "v1beta/models"): False,
 }
+DAY = 24 * 3600
+LIMITED = {429, 503, 529}  # an upstream's statuses for a rate limit or overload: try again later
 KEY_HEADER = {"anthropic": "x-api-key", "openai": "authorization", "gemini": "x-goog-api-key"}
 HOP = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding", *KEY_HEADER.values(),
        "keep-alive", "proxy-connection", "te", "upgrade", "date", "server"}
@@ -154,6 +159,26 @@ def usage(provider: str, body: bytes):
     return model, used
 
 
+def delay(resp, body: bytes) -> float:
+    """Seconds a limited upstream asks the caller to wait, from 5 to a day: its retry-after, in seconds or as an HTTP
+    date; else from the error body, an object or Gemini's list of them: Gemini's RetryInfo retryDelay ("37s"), or the
+    resets_in_seconds or resets_at (epoch seconds) of a ChatGPT login's limit, which sends no retry-after; else a
+    minute. A value it can't read, such as an ISO date, counts as none."""
+    after = (resp.getheader("retry-after") or "").strip()
+    number = rb'"\s*:\s*"?(\d+(?:\.\d+)?)s?"?\s*[,}\]]'
+    try:
+        wait = float(after)
+    except ValueError:
+        try:
+            wait = parsedate_to_datetime(after).timestamp() - time.time()
+        except (TypeError, ValueError):
+            if m := re.search(rb'"(retryDelay|resets_in_seconds|resets_at)' + number, body):
+                wait = float(m[2]) - (time.time() if m[1] == b"resets_at" else 0)
+            else:
+                wait = 60.0
+    return min(max(5.0, wait), DAY) if math.isfinite(wait) else 60.0
+
+
 def money(usd: float) -> str:
     """Dollars to the cent, or to a hundredth of a cent under one cent, so a small budget doesn't read as $0.00."""
     return f"${usd:.4f}" if 0 < usd < 0.01 else f"${usd:,.2f}"
@@ -195,13 +220,34 @@ class Proxy:
         self.lock = threading.Lock()
         self.by, self.by_job = {}, {}  # a restarted server carries on from what it recorded
         self.in_flight = {}  # call ticket -> (job_id or None, estimated usd)
-        replay(self.ledger, lambda row: (add(self.by, row), add(self.by_job, row, "job")))
+        # member: {model: (limited at, limited until)} of each model a provider limited and that hasn't answered
+        # since, and member: when a model last answered its call. A restart forgets them
+        self.limits, self.answered = {}, {}
+        replay(self.ledger, self.replayed)
         self.file = open(self.ledger, "a")
+
+    def replayed(self, row: dict):
+        """One ledger row read back at start: its spend, and a member's last answered call, which a restart keeps."""
+        add(self.by, row)
+        add(self.by_job, row, "job")
+        if row.get("who") and not row.get("job"):
+            self.answered[row["who"]] = max(self.answered.get(row["who"], 0), row.get("at") or 0)
 
     def totals(self, jobs: bool = False) -> dict:
         """Calls, tokens and dollars by member, or by job."""
         with self.lock:
             return {k: dict(v) for k, v in (self.by_job if jobs else self.by).items()}
+
+    def limited(self, who) -> dict:
+        """For member `who`: when a model last answered its call (answered_at), and of the models a provider limited
+        that haven't answered since, when the last limit came (limited_at) and when the last one ends
+        (limited_until)."""
+        with self.lock:
+            limits = self.limits.get(who, {}).values()
+            out = {"answered_at": self.answered[who]} if who in self.answered else {}
+            if limits:
+                out.update(limited_at=max(at for at, _ in limits), limited_until=max(until for _, until in limits))
+            return out
 
     def _over(self, job) -> str | None:
         run = sum(s["usd"] for s in self.by.values())
@@ -344,6 +390,13 @@ class Proxy:
                     return refuse(h, provider, 502, f"The server couldn't reach {provider}: {e}")
             finally:
                 conn.close()
+            # a job's calls are a trial's, not the member's conversation: they don't pause the member
+            if model_call and not job and status in LIMITED:
+                now = time.time()
+                until = now + delay(resp, plain(bytes(seen), resp.getheader("Content-Encoding") or ""))
+                with self.lock:
+                    mine = self.limits.setdefault(who, {})
+                    mine[asked] = (now, max(until, mine.get(asked, (0, 0))[1]))
             if not model_call or not 200 <= status < 300:
                 return
             body = plain(bytes(seen), resp.getheader("Content-Encoding") or "")
@@ -368,6 +421,11 @@ class Proxy:
                     ticket = None
                 add(self.by, row)
                 add(self.by_job, row, "job")
+                if not job:  # the model's limit is over, and so is any other that has run out since
+                    now = self.answered[who] = time.time()
+                    mine = self.limits.get(who, {})
+                    for m in [m for m, (_, until) in mine.items() if m == asked or until <= now]:
+                        del mine[m]
                 print(json.dumps(row), file=self.file, flush=True)
                 os.fsync(self.file.fileno())  # budgets are counted from the ledger: a crash must not forget a call
         finally:

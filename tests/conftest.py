@@ -53,6 +53,7 @@ def code(url: str, token: str = "", body: bytes = None, basic: bool = False) -> 
 class Stub:
     """A backend whose workers run nowhere. It keeps each spec it was asked to start, so a test can act as the worker
     with the token the server minted for it, and a worker it started stays live until it is stopped."""
+    kind = "local"
 
     def __init__(self):
         self.specs, self.up = {}, set()
@@ -139,12 +140,32 @@ def serve(tmp_path, monkeypatch):
 @pytest.fixture
 def fake_agents(tmp_path, monkeypatch):
     """Agents of the fake harness (tests/fake_harness.py): in HARNESSES, through tests/site, in every process a test
-    starts, and its CLI on PATH."""
+    starts, and its CLI on PATH. Its model calls go to a stand-in for OpenAI, which answers each with some usage."""
     import fake_harness
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class OpenAI(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            body = json.dumps({"model": "gpt-6.1-sol", "usage": {"input_tokens": 10, "output_tokens": 2}}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), OpenAI)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    monkeypatch.setenv("SWARMORY_PROXY_OPENAI", f"http://127.0.0.1:{upstream.server_port}")
     bin_ = tmp_path / "fake-bin"
     bin_.mkdir()
     (bin_ / "fake-agent").write_text(fake_harness.CLI.format(python=sys.executable))
     (bin_ / "fake-agent").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_}:{os.environ['PATH']}")
     monkeypatch.setenv("PYTHONPATH", f"{os.environ['PYTHONPATH']}{os.pathsep}{TESTS / 'site'}")
-    return [{"harness": "fake"}]
+    yield [{"harness": "fake"}]
+    upstream.shutdown()
+    upstream.server_close()

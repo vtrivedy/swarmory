@@ -9,4 +9,5 @@ What follows is what the server and its clients must agree on, each said once.""
 PORT = 7700  # where a server listens unless told otherwise
 HOURS = 3  # how long a run lasts, and how long a job's tokens work and its worker lets it run, unless asked otherwise
 POST_BUFFER = 500 << 20  # git's http.postBuffer for every client: a push is one request, as the server takes no chunks
+HOLD = 120  # the longest a held request (`next`, `wait`) waits: under the 150 s Modal allows a web request
 TRACE_MOST = 16 << 20  # bytes of a session file or agent.log per upload; `swarmory trace` sends the rest next time

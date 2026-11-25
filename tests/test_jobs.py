@@ -25,8 +25,10 @@ FAKE_HARBOR = '''import json, os, pathlib, sys, time
 args = sys.argv[1:]
 arg = lambda flag: args[args.index(flag) + 1]
 task, out, job, k = pathlib.Path(arg("-p")), pathlib.Path(arg("-o")), arg("--job-name"), int(arg("-k"))
+harness = "--ak" in args and pathlib.Path(arg("--ak").split("=", 1)[1])
 (out / "seen.json").write_text(json.dumps({"argv": args, "pid": os.getpid(), "env": dict(os.environ),
-    "task": sorted(p.name for p in task.iterdir()), "toml": (task / "task.toml").read_text()}))
+    "task": sorted(p.name for p in task.iterdir()), "toml": (task / "task.toml").read_text(),
+    "harness": harness and {p.name: p.read_text() for p in harness.iterdir()}}))
 if (task / "slow").exists():
     time.sleep(60)
 for i in range(k):
@@ -60,6 +62,19 @@ def task(tmp: Path, name="hello", toml=TASK) -> Path:
     git(work, "add", "-A")
     git(work, "commit", "-q", "-m", f"task {name}")
     return t
+
+
+def commit(tmp: Path, files: dict) -> str:
+    """Commits files, by their path in tmp/work, and returns the commit."""
+    for name, text in files.items():
+        (tmp / "work" / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp / "work" / name).write_text(text)
+    git(tmp / "work", "add", "-A")
+    git(tmp / "work", "commit", "-q", "-m", "files")
+    return git(tmp / "work", "rev-parse", "HEAD")
+
+
+RUN = "#!/bin/sh\necho hello > /app/output/answer.txt\n"
 
 
 def queue(tmp: Path):
@@ -182,6 +197,61 @@ def test_a_task_toml_that_is_not_sealed_or_has_a_template_in_an_env_table_is_ref
             jobs.submit("ada", {**ask, "path": path})
     assert jobs.submit("ada", {**ask, "path": "tasks/plain"})["job"]["status"] == "queued"
     assert not t.convs["general"][:-1], "a refused job is never queued"
+
+
+def test_an_agent_folder_is_a_committed_harness_with_a_run_and_no_task_has_a_compose_file(tmp_path):
+    task(tmp_path)
+    task(tmp_path, "composed")
+    head = commit(tmp_path, {"agents/h/run": RUN, "agents/bare/README": "no run", "tasks/composed/tests/"  # a separate verifier's
+                             "docker-compose.yaml": "services:\n  main:\n    environment: [X=${MODAL_TOKEN_SECRET}]\n"})
+    t, jobs = queue(tmp_path)
+    ask = {"commit": head, "path": "tasks/hello"}
+    job = jobs.submit("ada", {**ask, "params": {"agent": "agents/h/", "model": "claude-haiku-5-5"}})["job"]
+    assert job["params"]["agent"] == "agents/h" and job["harness"] == git(tmp_path / "work", "rev-parse",
+                                                                          "HEAD:agents/h"), "it names what ran"
+    for params in ({"agent": "agents/bare", "model": "m"}, {"agent": ".", "model": "m"}, {"agent": "/", "model": "m"},
+                   {"agent": "agents.h:Committed", "model": "m"}, {"agent": "agents/none", "model": "m"},
+                   {"agent": "../agents/h", "model": "m"}, {"agent": "agents/h"}):
+        with pytest.raises(ValueError):
+            jobs.submit("ada", {**ask, "params": params})
+    for agent in ("claude", "", "."):  # a misspelled built-in agent hears which there are
+        with pytest.raises(ValueError, match="one of oracle, nop, claude-code, codex"):
+            jobs.submit("ada", {**ask, "params": {"agent": agent, "model": "m"}})
+    with pytest.raises(ValueError, match="docker-compose.yaml"):
+        jobs.submit("ada", {**ask, "path": "tasks", "params": {"agent": "oracle"}})
+    assert jobs.submit("ada", {**ask, "params": {"agent": "oracle"}})["job"]["harness"] is None
+
+
+def test_a_harness_runs_in_harbor_through_the_adapter_alone_with_both_gateway_routes(jobs_run, tmp_path):
+    from swarmory import harbor
+    folder = task(tmp_path)
+    commit(tmp_path, {"agents/h/run": RUN})
+    (tmp_path / "work" / "agents" / "h" / "run").write_text("#!/bin/sh\nexit 1\n")
+    asked = jobs_run.swarmory("ada", "job", "harbor", ".", "--agent", "agents/h", "--model", "claude-haiku-5-5",
+                              cwd=folder)  # its path from the repo's root
+    assert asked[0] != 0 and "agents/h has uncommitted changes" in asked[1], asked
+    git(tmp_path / "work", "checkout", "--", "agents")
+    asked = jobs_run.swarmory("ada", "job", "harbor", ".", "--agent", "../../agents/h", "--model", "claude-haiku-5-5",
+                              cwd=folder)
+    assert asked[0] == 0, asked
+    claimed = jobs_run.claimed("j1")
+    assert claimed["job"]["params"]["agent"] == "agents/h", "sent as its path in the repo"
+    assert jobs_run.worker(claimed).strip().endswith("worker: j1 done")
+    seen = json.loads(jobs_run.artifacts("ada", "j1")["job-j1/seen.json"])
+    assert seen["harness"] == {"run": RUN} and seen["task"] == ["task.toml", "tests"]
+    a = seen["argv"]
+    assert a[a.index("-a") + 1] == "committed:Committed" and a[a.index("--ak") + 1].startswith("dir=")
+    assert seen["env"]["PYTHONPATH"] == str(harbor.ADAPTER) and (harbor.ADAPTER / "committed.py").exists(), \
+        "Harbor imports the adapter and nothing else of swarmory's"
+    assert seen["env"].keys() - {"LC_CTYPE", "__CF_USER_TEXT_ENCODING"} == {
+        "PATH", "HOME", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "SWARMORY_JOB_KEY", "PYTHONPATH"}
+    gateway = jobs_run.url.replace("127.0.0.1", "host.docker.internal") + "/llm"
+    assert a[a.index("--ae"):] == ["--ae", f"ANTHROPIC_BASE_URL={gateway}/anthropic",
+                                   "--ae", "ANTHROPIC_API_KEY=${SWARMORY_JOB_KEY}",
+                                   "--ae", f"OPENAI_BASE_URL={gateway}/openai/v1",
+                                   "--ae", "OPENAI_API_KEY=${SWARMORY_JOB_KEY}",
+                                   "--allow-environment-host", "host.docker.internal"]
+    assert seen["env"]["SWARMORY_JOB_KEY"] == claimed["spend"]
 
 
 def test_a_job_token_opens_only_its_own_job_and_a_spend_token_only_model_calls(jobs_run, tmp_path):

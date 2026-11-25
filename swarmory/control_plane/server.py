@@ -1,6 +1,6 @@
 """The swarmory server: one HTTP server that owns every run and supervises their workers through a backend.
 
-    swarmory serve [--data DIR] [--host 127.0.0.1] [--port N] [--backend local|modal] [--url URL] [--sync]
+    swarmory serve [--data DIR] [--host 127.0.0.1] [--port N] [--backend local|modal] [--url URL]
 
 GET /health and POST /api/<verb> (start, runs, status, stop) are the server's. Each run is under
 /r/RUN: its verbs (/api/<verb>), its git remote (/git/work.git/..., which logs each push), its model gateway
@@ -28,7 +28,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -366,13 +365,16 @@ class Handler(BaseHTTPRequestHandler):
         self.run.proxy.handle(self, provider, rest, who and who.member, job)
 
     def job_input(self):
-        """GET job/input?id=JOB: the folder the job runs on, as a tar of the tree the server recorded for it. Only that
-        job's own token opens it."""
-        jid = self.query.get("id", [""])[0]
+        """GET job/input?id=JOB[&part=harness]: the folder the job runs on, or its harness (its agent's folder), as a
+        tar of the tree the server recorded for it. Only that job's own token opens it."""
+        jid, part = self.query.get("id", [""])[0], self.query.get("part", ["task"])[0]
         if not self.allow("job.input", job=jid):
             return
+        job = self.run.jobs.jobs[jid]
+        tree = {"task": job["tree"], "harness": job["harness"]}.get(part)
+        if not tree:
+            return self.answer(404, {"error": f"job {jid} has no {part} folder"})
         with tempfile.TemporaryFile() as tar:  # whole first, so a failed git is a 500 and not half an archive
-            tree = self.run.jobs.jobs[jid]["tree"]
             if git(self.run.repo, "archive", "--format=tar", tree, into=tar, check=False) is None:
                 return self.answer(500, {"error": "git archive failed"})
             self.send(tar, "application/x-tar")
@@ -428,12 +430,6 @@ class Server(ThreadingHTTPServer):
         self.litellm.stop()
 
 
-def sync_forever():
-    while True:
-        time.sleep(10)
-        os.sync()
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(prog="swarmory serve", description="Runs the swarmory server, which holds every run.")
     p.add_argument("--data", default=str(Path.home() / ".swarmory" / "data"),
@@ -442,7 +438,6 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=PORT, help=f"the port to listen on ({PORT})")
     p.add_argument("--backend", choices=("local", "modal"), default="local", help="where workers run (local)")
     p.add_argument("--url", help="the address workers and clients reach the server at (http://HOST:PORT)")
-    p.add_argument("--sync", action="store_true", help="os.sync() every 10 s, for a Modal Volume")
     a = p.parse_args(argv)
     if not os.environ.get("SWARMORY_OPERATOR_TOKEN"):
         sys.exit("Set SWARMORY_OPERATOR_TOKEN to the operator's token: a value you keep, like `openssl rand -hex 16`.")
@@ -456,8 +451,6 @@ def main(argv=None):
         from swarmory.backends.local import Local
         data.mkdir(mode=0o700, parents=True, exist_ok=True)
         backend = Local(data)
-    if a.sync:
-        threading.Thread(target=sync_forever, daemon=True).start()
     server = Server(data, a.host, a.port, backend, a.url)
     print(f"swarmory serves {len(server.runs.configs())} runs at {server.url}, from {data}", flush=True)
     signal.signal(signal.SIGTERM, signal.default_int_handler)  # `kill PID` closes the server as ctrl-C does

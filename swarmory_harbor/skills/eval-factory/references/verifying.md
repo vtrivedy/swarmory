@@ -5,6 +5,18 @@ see the verifier, the reference scores 1 through Harbor, the empty answer scores
 [`scripts/verify_task.py`](../scripts/verify_task.py) runs these checks on Modal, cheapest first, and keeps every job
 and log in one evidence folder. None of them calls a model.
 
+## In a swarmory run
+
+You hold no Modal token, so `verify_task.py free` and `harbor run` don't apply. Do this instead:
+
+1. Run the task's own tests and the lint, as in steps 1 and 2 below. The lint's `swarmory_job_sealed` row must pass,
+   or the server refuses the job.
+2. Commit the task folder.
+3. Run `swarmory job harbor <task folder> --agent oracle` and `swarmory job harbor <task folder> --agent nop`. The
+   oracle must score 1 and the nop 0. Read each trial's error before its reward.
+
+The traps below still apply to what those jobs report. The rest of this page is for checks outside a swarmory run.
+
 ## Set up
 
 1. Use Harbor 0.23 with Modal credentials. Run every command with the Python that has Harbor installed, so `harbor`

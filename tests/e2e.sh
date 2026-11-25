@@ -171,6 +171,26 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   pushed && result=pass && break
 done
 [ "$result" = pass ] || [ "$(date +%s)" -lt "$deadline" ] || say "FAIL: not every agent pushed to main by the deadline"
+if [ "$result" = pass ]; then  # the mission's context reached the agents, and the repo's agent docs did not
+  link=$(status | awk '$1 == "watch" {print $2}')
+  curl -sf -H "Authorization: Bearer ${link#*#}" "${link%/view#*}/commits" | "$PY" -c "import json, sys
+files = {f['path'] for c in json.load(sys.stdin)['commits'] for f in c['files']}
+sys.exit(any(p.startswith('decoy-') for p in files))" || { say "FAIL: an agent followed the repo's AGENTS.md"; result=""; }
+  if [ $modal = 0 ]; then
+    for m in "$data/runs/$run/members"/*/; do
+      grep -q "Replace your stub's body" "$m/prompt.md" && grep -q "greeting-style" "$m/prompt.md" ||
+        { say "FAIL: $(basename "$m")'s prompt lacks the brief or the skill"; result=""; }
+      [ -f "$m/home/.agents/skills/greeting-style/SKILL.md" ] && [ -f "$m/home/.claude/skills/greeting-style/SKILL.md" ] ||
+        { say "FAIL: $(basename "$m")'s skills are not linked"; result=""; }
+      token=$("$PY" -c "import json, sys; print(json.load(open(sys.argv[1]))['token'])" "$m/home/.swarmory/login")
+      (cd "$m/work" && HOME="$m/home" git remote get-url origin && HOME="$m/home" git config -l) | grep -qF "$token" &&
+        { say "FAIL: $(basename "$m")'s git shows its token"; result=""; }
+    done
+  else  # downloads stay in the sandbox, off the Volume
+    modal_sandbox ada "sys.exit(sb.exec('sh', '-c', '! test -e /swarmory/home/.cache && ! test -e /swarmory/home/.npm').wait())" ||
+      { say "FAIL: ada's caches are on the Volume"; result=""; }
+  fi
+fi
 status
 groups=$([ $modal = 1 ] || for f in "$data/workers/$run"+*.json; do [ -f "$f" ] && pid "$f"; done)
 stopped=$run

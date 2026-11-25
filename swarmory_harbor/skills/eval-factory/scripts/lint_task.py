@@ -64,11 +64,59 @@ def check_dockerfile_user(task, toml):
 
 def check_solver_network_narrow(task, toml):
     environment = toml.get("environment", {})
+    if not isinstance(environment, dict):
+        return False, f"environment = {environment!r} is not a table"
     mode, hosts = environment.get("network_mode"), environment.get("allowed_hosts")
     if mode == "allowlist":
         ok = isinstance(hosts, list) and bool(hosts) and all(isinstance(h, str) and h.strip() for h in hosts)
         return ok, f"[environment] network_mode = 'allowlist', allowed_hosts = {hosts!r}"
     return mode == "no-network", f"[environment] network_mode = {mode!r}"
+
+
+NETWORK_KEYS = ("network_mode", "allowed_hosts", "allow_internet")
+
+
+def unsealed(toml, where=""):
+    """What a swarmory job refuses in a task.toml, as swarmory/harbor.py's seal() does: an environment that isn't
+    no-network, a network setting on an agent or verifier phase, or a `${...}` value in an env table."""
+    found = []
+    if isinstance(toml, list):
+        for i, item in enumerate(toml):
+            found += unsealed(item, f"{where}[{i}]")
+        return found
+    if not isinstance(toml, dict):
+        return found
+    for key, value in toml.items():
+        path = f"{where}.{key}" if where else key
+        if key == "env" and isinstance(value, dict):
+            found += [f"[{path}] {k} = {v!r}" for k, v in value.items() if isinstance(v, str) and "${" in v]
+        found += unsealed(value, path)
+    if where:
+        return found
+    def sealed(table, name):
+        if isinstance(table, dict) and table.get("network_mode") == "no-network" and not table.keys() & {"allowed_hosts", "allow_internet"}:
+            return []
+        return [f"[{name}] is not network_mode = 'no-network' alone"]
+
+    found += sealed(toml.get("environment", {}), "environment")
+    steps = [(f"steps[{i}].", s) for i, s in enumerate(toml.get("steps", ())) if isinstance(s, dict)]
+    for prefix, holder in [("", toml), *steps]:
+        for phase in ("agent", "verifier"):
+            table = holder.get(phase)
+            if not isinstance(table, dict):
+                continue
+            found += [f"[{prefix}{phase}] sets {k}" for k in NETWORK_KEYS if k in table]
+            if isinstance(table.get("environment"), dict):
+                found += sealed(table["environment"], f"{prefix}{phase}.environment")
+    return found
+
+
+def check_swarmory_job_sealed(task, toml):
+    bad = unsealed(toml) + [f"{p.relative_to(task)} exists, and a job runs one container from a Dockerfile"
+                            for p in sorted(task.rglob("docker-compose.yaml"))]
+    if not bad:
+        return True, "sealed: a swarmory job accepts it"
+    return False, "can't run as a swarmory job, which needs every environment no-network: " + "; ".join(bad)
 
 
 def copied_sources(dockerfile):
@@ -138,7 +186,7 @@ def check_reference_reward_numeric(task, toml):
 
 CHECKS = [check_schema_version, check_verifier_separate, check_verifier_dockerfile, check_verifier_not_solver,
           check_agent_user, check_dockerfile_user, check_image_has_no_task_files, check_solver_network_narrow,
-          check_artifacts_declared, check_test_sh_wipes_reward, check_reference_reward_numeric]
+          check_swarmory_job_sealed, check_artifacts_declared, check_test_sh_wipes_reward, check_reference_reward_numeric]
 
 
 def lint(task):

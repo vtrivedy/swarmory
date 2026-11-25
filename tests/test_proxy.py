@@ -5,6 +5,7 @@ cut short costs no call, and a model named for another provider goes to LiteLLM 
 import json
 import shutil
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +17,7 @@ from conftest import soon
 from swarmory.control_plane.litellm import LiteLLM
 from swarmory.control_plane.proxy import Proxy, add
 from swarmory.control_plane.team import replay
-from swarmory.control_plane.verbs import spend_text
+from swarmory.control_plane.verbs import VERBS, spend_text
 
 ANTHROPIC = [{"type": "message_start", "message": {"model": "claude-opus-5-5", "usage": {
     "input_tokens": 10, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200, "output_tokens": 1,
@@ -49,6 +50,14 @@ class Upstream(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'data: {"type":"response.created","response":{"usage":null}}\n\n')
             self.wfile.flush()
+            return
+        if limit := body.get("limit"):  # {status, headers, error}: a provider's refusal
+            data = json.dumps(limit["error"]).encode()
+            self.send_response(limit["status"])
+            for k, v in {**limit.get("headers", {}), "Content-Length": str(len(data))}.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(data)
             return
         if self.gate and body.get("hold"):
             self.gate[0].set()
@@ -254,3 +263,46 @@ def test_in_flight_budget_reservation_blocks_concurrent_overshoot_and_dropped_st
     row = call.rows()[-1]
     assert row["incomplete"] is True and row["usd"] == 0.0
     assert call.proxy.totals()["ada"]["unpriced"] == 0
+
+
+def test_a_provider_limit_on_a_members_call_is_noted_until_it_resets_and_spend_reports_it(call):
+    call.restart(budget=100)
+    spend = VERBS["spend"].call
+    run = type("Run", (), {"id": "r1", "config": {}, "proxy": call.proxy})()
+    reported = lambda who: spend(run, type("Who", (), {"member": who})(), {}, None).get("limited_until")
+    overloaded = {"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}}
+    gemini = [{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": [  # as Gemini streams it
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "37.5s"}]}}]
+    chatgpt = {"error": {"type": "usage_limit_reached", "resets_in_seconds": 7200}}
+    now = time.time()
+    req = {"model": "claude-opus-5-5", "limit": {"status": 429, "headers": {"retry-after": "30"}, "error": overloaded}}
+    assert call("/anthropic/v1/messages", req)[0] == 429
+    assert reported("ada") == pytest.approx(now + 30, abs=2) and reported("ed") is None
+    assert call("/anthropic/v1/messages", {**req, "limit": {"status": 429, "error": gemini}}, who="ed")[0] == 429
+    assert reported("ed") == pytest.approx(now + 37.5, abs=2)
+    assert call("/openai/v1/responses", {"model": "gpt-6.1-sol", "limit": {"status": 429, "error": chatgpt}}, who="cy")[0] == 429
+    assert reported("cy") == pytest.approx(now + 7200, abs=2)
+    assert call("/anthropic/v1/messages", {**req, "limit": {"status": 529, "error": overloaded}}, who="ed")[0] == 529
+    assert reported("ed") == pytest.approx(now + 60, abs=2), "an upstream's 529 with no delay didn't wait a minute"
+    assert call("/anthropic/v1/messages", req, who="ed")[0] == 429
+    assert reported("ed") == pytest.approx(now + 60, abs=2), "a shorter limit cut a longer one short"
+    assert call("/anthropic/v1/messages", req, who="bo", **{"x-job": "j1", "x-budget": "100"})[0] == 429
+    assert reported("bo") is None, "a job's call paused its member"
+    iso = {"error": {"type": "usage_limit_reached", "resets_at": "2026-11-25T10:00:00Z"}}
+    assert call("/openai/v1/responses", {"model": "gpt-6.1-sol", "limit": {"status": 429, "error": iso}}, who="di")[0] == 429
+    assert reported("di") == pytest.approx(now + 60, abs=2), "an ISO resets_at was read as seconds"
+    endless = {"status": 429, "headers": {"retry-after": "inf"}, "error": overloaded}
+    assert call("/anthropic/v1/messages", {**req, "limit": endless}, who="fy")[0] == 429
+    assert reported("fy") == pytest.approx(now + 60, abs=2)
+
+    side = {"model": "gpt-6.1-sol", "limit": {"status": 429, "headers": {"retry-after": "5"}, "error": overloaded}}
+    assert call("/openai/v1/responses", side)[0] == 429  # a side model, limited briefly, then answers
+    assert call("/openai/v1/responses", {"model": "gpt-6.1-sol"})[0] == 200
+    assert reported("ada") == pytest.approx(now + 30, abs=2), "a side model's answer ended the main model's limit"
+    assert call("/anthropic/v1/messages", {"model": "claude-opus-5-5"})[0] == 200
+    assert reported("ada") is None, "an answered call left the limit the harness retried past"
+    answered = spend(run, type("Who", (), {"member": "ada"})(), {}, None)
+    assert answered["answered_at"] == pytest.approx(answered["now"], abs=2)
+    call.restart(budget=0.01)
+    assert call("/anthropic/v1/messages", {"model": "claude-opus-5-5"}, who="al")[0] == 429
+    assert reported("al") is None, "the gateway's own budget refusal counted as a provider's limit"

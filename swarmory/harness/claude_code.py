@@ -27,13 +27,11 @@ class ClaudeCode:
         return {"ANTHROPIC_BASE_URL": f"{llm.url}/anthropic", "ANTHROPIC_API_KEY": llm.token}
 
     def prepare(self, work: str, llm: Endpoint, model: str | None = None, meta: dict | None = None) -> None:
-        """Excludes the instruction files in every folder above `work`, which it would read (locally, swarmory's own),
-        and adds the hook that delivers messages between tool calls."""
-        above = Path(os.path.realpath(work)).parents  # real: as the session sees its cwd
+        """Adds the hook that delivers messages between tool calls to its user settings, the only ones command() has
+        it read."""
         settings = Path.home() / self.home / "settings.json"
         settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps({"claudeMdExcludes": [str(d / f) for d in above for f in DOCS],
-                                        "hooks": INBOX}) + "\n")
+        settings.write_text(json.dumps({"hooks": INBOX}) + "\n")
 
     def inbox(self, text: str) -> dict:
         return context(text)
@@ -41,6 +39,7 @@ class ClaudeCode:
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
         return [self.cli, "-p", *(["--continue"] if resume else []), prompt, "--output-format", "stream-json",
                 "--verbose", "--dangerously-skip-permissions",
+                "--setting-sources", "user",  # no CLAUDE.md or settings from the repo or the folders above it
                 # internal wakeup/cron tools keep `claude -p` sleeping instead of returning to `swarmory wait`
                 "--disallowedTools", "ScheduleWakeup,CronCreate,CronDelete,CronList",
                 *(["--model", model] if model else []), *args]

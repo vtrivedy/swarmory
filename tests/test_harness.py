@@ -1,5 +1,7 @@
 """A coding agent swarmory does not build in joins a team from its commands."""
 import importlib
+import json
+import shutil
 import sys
 import types
 
@@ -7,7 +9,7 @@ import pytest
 
 from swarmory import harness
 from swarmory.control_plane.runs import new_run
-from swarmory.harness.base import Endpoint
+from swarmory.harness.base import INBOX, Endpoint
 from swarmory.worker import agent
 
 AIDER = {"harness": "aider", "model": "anthropic/claude-haiku-5-5", "run": "aider --model {model} -m {prompt}",
@@ -45,11 +47,12 @@ def test_a_command_harness_fills_its_commands_and_points_setup_at_the_gateway(mo
     with pytest.raises(RuntimeError):
         split.prepare(str(tmp_path), Endpoint("http://server/llm", "tok"))
     for k, v in dict(SWARMORY_HARNESS="x", SWARMORY_RUN="x {prompt}", SWARMORY_RESUME="x {prompt}",
-                     SWARMORY_SETUP="echo bad >&2; exit 3", SWARMORY_DIR=str(tmp_path), SWARMORY_PROMPT="hi",
+                     SWARMORY_SETUP="echo bad >&2; exit 3", SWARMORY_DIR=str(tmp_path),
                      SWARMORY_URL="http://x", SWARMORY_TOKEN="t", SWARMORY_MODEL="anthropic/claude-haiku-5-5",
                      SWARMORY_ARGS="").items():
         monkeypatch.setenv(k, v)
     (tmp_path / "work").mkdir()
+    (tmp_path / "prompt.md").write_text("hi\n")
     a = agent.Agent()
     a.sessions.mkdir()
     a.upload = lambda sync: None
@@ -112,3 +115,40 @@ def test_deepagents_marks_resumable_only_after_checkpointing(monkeypatch, tmp_pa
     ds.DB.write_bytes(b"stale")
     ds.main("anthropic/claude-haiku-5-5", "fresh")
     assert ds.DB.read_bytes() != b"stale"
+
+
+def test_team_sessions_read_no_agent_docs_from_the_repo(tmp_path, monkeypatch):
+    """The brief is the mission's instructions: Claude Code reads only its user settings, which hold the inbox hook,
+    Codex reads no AGENTS.md, in a fresh session or a resumed one, and pi reads no context files."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    llm = Endpoint("http://server/llm", "tok")
+    claude, codex, pi = (harness.named(n) for n in ("claude-code", "codex", "pi"))
+    for resume in (False, True):
+        cmd = claude.command("go", resume, None, [])
+        assert cmd[cmd.index("--setting-sources") + 1] == "user"
+        assert "--no-context-files" in pi.command("go", resume, "anthropic/claude-haiku-5-5", [])
+    claude.prepare(str(tmp_path / "work"), llm)
+    assert json.loads((tmp_path / ".claude" / "settings.json").read_text()) == {"hooks": INBOX}
+    codex.prepare(str(tmp_path / "work"), llm)
+    config = (tmp_path / ".codex" / "config.toml").read_text()
+    assert "project_doc_max_bytes = 0\n" in config.split("[")[0], "not a top-level key"
+
+
+def test_the_missions_skills_are_linked_where_every_coding_agent_finds_them(tmp_path, monkeypatch):
+    home, work = tmp_path / "home", tmp_path / "work"
+    monkeypatch.setenv("HOME", str(home))
+    for name in ("a", "b"):
+        (work / "skills" / name).mkdir(parents=True)
+        (work / "skills" / name / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
+    (work / "skills" / "notes").mkdir()  # no SKILL.md: not a skill
+    (home / ".claude" / "skills").mkdir(parents=True)
+    (home / ".claude" / "skills" / "own").symlink_to(tmp_path)  # not the mission's: left alone
+    agent.link_skills(work)
+    agent.link_skills(work)
+    for d in agent.SKILLS:
+        assert {p.name for p in (home / d).iterdir()} - {"own"} == {"a", "b"}
+        assert (home / d / "a" / "SKILL.md").is_file()
+    shutil.rmtree(work / "skills" / "b")
+    agent.link_skills(work)
+    assert sorted(p.name for p in (home / ".claude" / "skills").iterdir()) == ["a", "own"]
+    assert [p.name for p in (home / ".agents" / "skills").iterdir()] == ["a"]

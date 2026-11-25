@@ -1,9 +1,11 @@
 """The team model, and a run on the one server, where a bug would be silent: whom a token lets in and which DMs it
 shows, the push log, the seed, replaying the log after a crash, and a message whose names are only in a file."""
+import functools
 import json
 import os
 import shutil
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -47,10 +49,11 @@ def control_plane(serve):
     yield api
 
 
-def git_in(work: Path, *args, email="ada@swarmory.local"):
+def git_in(work: Path, *args, email="ada@swarmory.local", config=os.devnull):
     return subprocess.run(["git", "-C", str(work), "-c", "user.name=Ada L", "-c", f"user.email={email}", *args],
                           check=True, capture_output=True, text=True,
-                          env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}).stdout
+                          env={**os.environ, "GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_NOSYSTEM": "1",
+                               "GIT_TERMINAL_PROMPT": "0"}).stdout
 
 
 def test_a_token_opens_only_its_doors_the_view_token_only_reads_and_a_dm_stays_between_its_two(control_plane):
@@ -76,23 +79,41 @@ def test_a_token_opens_only_its_doors_the_view_token_only_reads_and_a_dm_stays_b
     assert [m["text"] for m in control_plane("grace", "read")["messages"]] == ["the key is under the mat"]
 
 
-def test_each_push_is_logged_accepted_or_refused_and_main_cannot_be_rewritten_or_deleted(control_plane, tmp_path):
-    work = tmp_path / "w"
-    remote = control_plane.url.replace("://", f"://ada:{control_plane.tokens['ada']}@") + "/git/work.git"
-    git_in(tmp_path, "clone", "-q", remote, str(work))
-    seeded = git_in(work, "rev-parse", "HEAD").strip()
-    git_in(work, "commit", "-q", "--allow-empty", "-m", "start")
-    git_in(work, "branch", "side")
-    first = git_in(work, "rev-parse", "HEAD").strip()
-    git_in(work, "push", "-q", remote, "main", "side")
-    git_in(work, "commit", "-q", "--amend", "--allow-empty", "-m", "start over")
-    rewrite = git_in(work, "rev-parse", "HEAD").strip()
+def test_each_push_is_logged_accepted_or_refused_and_main_cannot_be_rewritten_or_deleted(control_plane, tmp_path,
+                                                                                         monkeypatch):
+    """ada logs in as an agent does, and clones and pushes `control-plane:work.git` with the token from `swarmory
+    git-credential`, which no remote URL, git config or config file shows."""
+    token, swarmory = control_plane.tokens["ada"], tmp_path / "bin" / "swarmory"
+    swarmory.parent.mkdir()
+    swarmory.write_text(f'#!/bin/sh\nexec {sys.executable} -m swarmory.cli "$@"\n')
+    swarmory.chmod(0o755)
+    login, config = tmp_path / "sw" / "login", tmp_path / "global"
+    config.write_text(f"[include]\n\tpath = {login.parent / 'gitconfig'}\n")
+    monkeypatch.setenv("PATH", f"{swarmory.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("SWARMORY_LOGIN", str(login))
+    subprocess.run([swarmory, "login", control_plane.url, token], check=True, capture_output=True)
+    git = functools.partial(git_in, config=config)
+    work, remote = tmp_path / "w", "control-plane:work.git"
+    git(tmp_path, "clone", "-q", remote, str(work))
+    assert git(work, "remote", "get-url", "origin").strip() == control_plane.url + "/git/work.git"
+    shown = git(work, "config", "-l")
+    assert "helper=!swarmory git-credential" in shown
+    assert token not in shown + (login.parent / "gitconfig").read_text()
+    seeded = git(work, "rev-parse", "HEAD").strip()
+    git(work, "commit", "-q", "--allow-empty", "-m", "start")
+    git(work, "branch", "side")
+    first = git(work, "rev-parse", "HEAD").strip()
+    git(work, "push", "-q", remote, "main")
+    with pytest.raises(subprocess.CalledProcessError):  # work on a branch is work nobody sees
+        git(work, "push", "-q", remote, "side")
+    git(work, "commit", "-q", "--amend", "--allow-empty", "-m", "start over")
+    rewrite = git(work, "rev-parse", "HEAD").strip()
     with pytest.raises(subprocess.CalledProcessError):
-        git_in(work, "push", "-q", "--force", remote, "main")
+        git(work, "push", "-q", "--force", remote, "main")
     with pytest.raises(subprocess.CalledProcessError):
-        git_in(work, "push", "-q", remote, ":main")
-    git_in(work, "clone", "-q", remote, str(tmp_path / "c"))
-    assert git_in(work, "ls-remote", remote, "main").split()[0] == first
+        git(work, "push", "-q", remote, ":main")
+    git(work, "clone", "-q", remote, str(tmp_path / "c"))
+    assert git(work, "ls-remote", remote, "main").split()[0] == first
 
     zero = "0" * 40
     pushes = [{k: v for k, v in ev.items() if k not in ("seq", "at")}
@@ -101,7 +122,8 @@ def test_each_push_is_logged_accepted_or_refused_and_main_cannot_be_rewritten_or
     assert pushes == [
         {"type": "push", "by": "vivek", "ref": "refs/heads/main", "old": zero, "new": seeded, "ok": True},
         {"type": "push", "by": "ada", "ref": "refs/heads/main", "old": seeded, "new": first, "ok": True},
-        {"type": "push", "by": "ada", "ref": "refs/heads/side", "old": zero, "new": first, "ok": True},
+        {"type": "push", "by": "ada", "ref": "refs/heads/side", "old": zero, "new": first, "ok": False,
+         "reason": "pre-receive hook declined"},
         {"type": "push", "by": "ada", "ref": "refs/heads/main", "old": first, "new": rewrite, "ok": False,
          "reason": "non-fast-forward"},
         {"type": "push", "by": "ada", "ref": "refs/heads/main", "old": first, "new": zero, "ok": False,

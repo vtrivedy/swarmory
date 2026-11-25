@@ -23,15 +23,23 @@ environment_mode = "separate"
     "tests/cases/reference/output/answer.txt": "42\n",
 }
 
-BREAKS = {
-    "verifier_separate": ("task.toml", 'environment_mode = "separate"', 'environment_mode = "shared"'),
-    "agent_user": ("task.toml", 'user = "agent"', 'user = "root"'),
-    "dockerfile_user": ("environment/Dockerfile", "USER agent", "USER root"),
-    "solver_network_narrow": ("task.toml", 'network_mode = "no-network"', 'network_mode = "public"'),
-    "image_has_no_task_files": ("environment/Dockerfile", "USER agent", "COPY . /app\nUSER agent"),
-    "test_sh_wipes_reward": ("tests/test.sh", "rm -f /logs/verifier/reward.*\n", ""),
-    "reference_reward_numeric": ("tests/verifier.py", "{'reward': 1.0}", "{'reward': 1.0, 'gate': 'none'}"),
-}
+SEALED = {"swarmory_job_sealed"}  # what a swarmory job refuses
+BREAKS = [  # (the checks that fail, the file, the text replaced, its replacement)
+    ({"verifier_separate"}, "task.toml", 'environment_mode = "separate"', 'environment_mode = "shared"'),
+    ({"agent_user"}, "task.toml", 'user = "agent"', 'user = "root"'),
+    ({"dockerfile_user"}, "environment/Dockerfile", "USER agent", "USER root"),
+    ({"solver_network_narrow", *SEALED}, "task.toml", 'network_mode = "no-network"', 'network_mode = "public"'),
+    (SEALED, "task.toml", 'network_mode = "no-network"', 'network_mode = "allowlist"\nallowed_hosts = ["pypi.org"]'),
+    (SEALED, "task.toml", 'user = "agent"', 'user = "agent"\nnetwork_mode = "no-network"'),
+    (SEALED, "task.toml", 'environment_mode = "separate"',
+     'environment_mode = "separate"\n[verifier.environment]\nnetwork_mode = "public"'),
+    (SEALED, "task.toml", 'environment_mode = "separate"', 'environment_mode = "separate"\n[verifier.env]\nK = "${K}"'),
+    ({"solver_network_narrow", *SEALED}, "task.toml", '[environment]\nnetwork_mode = "no-network"',
+     'environment = "no-network"'),
+    ({"image_has_no_task_files"}, "environment/Dockerfile", "USER agent", "COPY . /app\nUSER agent"),
+    ({"test_sh_wipes_reward"}, "tests/test.sh", "rm -f /logs/verifier/reward.*\n", ""),
+    ({"reference_reward_numeric"}, "tests/verifier.py", "{'reward': 1.0}", "{'reward': 1.0, 'gate': 'none'}"),
+]
 
 
 def write_task(root, files):
@@ -50,8 +58,10 @@ def failed(capsys, task):
 
 def test_a_sealed_task_passes_and_each_break_fails_only_its_check(tmp_path, capsys):
     assert failed(capsys, write_task(tmp_path / "sealed", TASK)) == (0, set())
-    for check, (name, old, new) in BREAKS.items():
-        files = dict(TASK, **{name: TASK[name].replace(old, new)})
-        assert failed(capsys, write_task(tmp_path / check, files)) == (1, {check})
+    for i, (checks, name, old, new) in enumerate(BREAKS):
+        files = dict(TASK, **{name: TASK[name].replace(old, new, 1)})
+        assert failed(capsys, write_task(tmp_path / str(i), files)) == (1, checks)
+    files = dict(TASK, **{"tests/docker-compose.yaml": "services: {}\n"})  # a separate verifier's
+    assert failed(capsys, write_task(tmp_path / "composed", files)) == (1, SEALED)
     files = {k: v for k, v in TASK.items() if k != "tests/Dockerfile"}
     assert failed(capsys, write_task(tmp_path / "no-verifier-image", files)) == (1, {"verifier_dockerfile"})

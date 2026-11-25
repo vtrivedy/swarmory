@@ -1,0 +1,3 @@
+Copied verbatim from https://github.com/harbor-framework/harbor/tree/90f2ee3c18d394eb0da0070415c6297eb13b87f8/skills/create-task
+License: Apache-2.0 (https://github.com/harbor-framework/harbor/blob/90f2ee3c18d394eb0da0070415c6297eb13b87f8/LICENSE)
+In a swarmory run, swarmory_harbor/skills/running-harbor-jobs/SKILL.md takes precedence over this skill on how tasks run.

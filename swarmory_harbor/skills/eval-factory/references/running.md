@@ -17,8 +17,9 @@ Before the first model run, prove the task folder works with the checks that cal
 ([verifying.md](verifying.md)).
 
 In a swarmory run you hold no Modal token or model key. Run Harbor as a job instead, which a job worker of the run
-runs for you: `swarmory job harbor tasks/<task-name> --agent <oracle, nop, claude-code or codex> [--model <model>]
-[--attempts <runs>] [--env <docker or modal>] --to <issue>`. Trials run in Docker on the server's machine when the
+runs for you: `swarmory job harbor tasks/<task-name> --agent <oracle, nop, claude-code, codex or a harness folder>
+[--model <model>] [--attempts <runs>] [--env <docker or modal>] --to <issue>`. A harness folder is a committed folder
+of your own with an executable `run`, which a job runs inside each trial. Trials run in Docker on the server's machine when the
 server is local and on Modal otherwise, unless `--env` says. Commit the task folder first. `swarmory job` refuses a
 folder with uncommitted changes, and the job runs on the commit, so its result names exactly what ran.
 `swarmory results tasks/<task-name>` lists every finished job on the folder's current content. The result comes as a message with the job's artifacts
@@ -26,11 +27,13 @@ attached, which `swarmory get` downloads: `job-<id>/<id>/` in the archive is Har
 [Count the results](#count-the-results) reads it as it reads a job you ran. How jobs run and fail, and how to share a
 run, is in the running-harbor-jobs skill (`skills/running-harbor-jobs/SKILL.md` in the mission).
 
-A job changes two things about a task. It runs every environment and verifier with no network, whatever `task.toml`
-says, and a trial of `claude-code` or `codex` reaches only the run's model gateway. It refuses a `task.toml` with a
-`${...}` value in an `env` table. So a task whose verifier calls a model
-([verifiers.md](verifiers.md)) cannot run as a job: run it with Harbor yourself, outside the run. The rest of this
-page is for running Harbor yourself.
+A job runs only a sealed task. The server refuses a `task.toml` unless `[environment]` and any `[verifier.environment]`
+have `network_mode = "no-network"` and nothing else about the network, `[agent]` and `[verifier]` set no network
+field, and no `env` table holds a `${...}` value. It also refuses a `docker-compose.yaml` anywhere in the folder: a
+job's task is one container that its Dockerfile builds. `lint_task.py` flags each of these. A model trial still
+reaches the run's model gateway, which the job adds. So a task whose verifier calls a model
+([verifiers.md](verifiers.md)) can't run as a swarmory job. The rest of this page is for running Harbor yourself,
+outside a swarmory run. In a swarmory run, don't run `harbor`, `docker` or `modal` yourself.
 
 ## Run models
 
@@ -57,7 +60,8 @@ harbor run -p tasks/ -i <task-name> -a claude-code -m <model> -k 2 -n 2 --env mo
 - `--allow-environment-host` gives the solver's container the model endpoint and no other network.
 - With `ANTHROPIC_BASE_URL` set, Harbor sends `-m` to the endpoint exactly as written, with no provider prefix
   removed. A name the endpoint doesn't list fails every trial before the model starts.
-- For an eval of your own agent, run it through its Harbor adapter with `-a <module>:<AgentClass>`.
+- For an eval of your own agent, run it through its Harbor adapter with `-a <module>:<AgentClass>`. In a swarmory
+  run, use a harness folder instead (running-harbor-jobs skill): a job takes no `module:Class`.
 - Other vendor harnesses are `-a codex` and `-a antigravity-sdk`. `harbor run --help` lists the rest.
 - Pass the endpoint settings with `--ae`, never in a committed file. Put each API-key reference in single quotes so
   Harbor substitutes it.

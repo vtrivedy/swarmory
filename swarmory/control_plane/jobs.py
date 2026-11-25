@@ -1,14 +1,16 @@
 """Jobs: Harbor runs a member asks the run to do on a committed folder of tasks.
 
 A job is a commit, a path and Harbor's parameters. The server checks that the commit is in the run's repo,
-records the git tree id of `commit:path`, and pins the commit under refs/jobs/<id>. The submitter sets none of that,
+records the git tree id of `commit:path`, and pins the commit under refs/jobs/<id>. An agent that is a folder of the
+same commit (a harness) is recorded by its own tree id too, as the job's `harness`. The submitter sets none of that,
 so a result names exactly the content it ran on, and `jobs` finds every job on the same tree. A job worker
-(swarmory/worker/job.py) gets its input from `git archive` of that tree. The server's supervisor claims each queued
+(swarmory/worker/job.py) gets its input, and its harness, from `git archive` of those trees. The server's supervisor claims each queued
 job and starts its worker. The claim gives the job a tag, which Harbor puts on each sandbox it starts for it, so the
 sandboxes a job leaves behind can be ended when it ends.
 
 Harbor runs every job (swarmory/harbor.py). Jobs keeps its events (job, claim, finish, cancel) in the team's log and
 posts through the team."""
+import contextlib
 import os
 import re
 import secrets
@@ -22,6 +24,8 @@ from .policy import sha
 from .proxy import money
 from .team import NotFound, SYSTEM, number, string
 
+SECRETS = harbor.MODAL  # the server's variables a job worker gets on the local backend: Harbor's Modal token
+PACKAGES = (harbor.VERSION,)  # what the job workers' image installs
 TOKENS = 20_000_000  # tokens in and out one job's trials may use through the gateway
 READ_MOST = 1 << 20  # bytes of one input file Harbor's check may read
 
@@ -104,12 +108,34 @@ class Jobs:
         self.count = 0
         self.tokens = {}  # sha256 of a claimed job's job or spend token -> ("job" or "spend", the job's id)
 
+
+    def guide(self) -> str:
+        """The starting prompt's section on jobs, or "" when the run has none."""
+        if not self.enabled:
+            return ""
+        where = "on Modal" if harbor.where({}, self.url) == "modal" else "in Docker on the server's machine"
+        return ("## Run Harbor jobs through the server\n\n"
+                "This run can run Harbor jobs. A job runs Harbor on a task folder at one commit and reports the result. "
+                "If the mission has the running-harbor-jobs skill, read it before you build a task: it says what a "
+                "job accepts.\n\n"
+                "1. Finish the task folder and commit it.\n"
+                "2. Run `swarmory job harbor PATH --agent AGENT [--model MODEL] [--to ISSUE]`. It pushes your HEAD to "
+                "a job ref, not to main, and queues the job.\n"
+                f"3. The server runs Harbor {where}. The result comes as a message in general, or on ISSUE, with the "
+                "job's files attached.\n\n"
+                "You never run `harbor`, `docker` or `modal` yourself. `swarmory help` lists the job commands.\n\n")
+
+    def cleanup(self, job: dict):
+        """After a job's worker died: ends the sandboxes its Harbor left running on Modal."""
+        if harbor.where(job["params"], self.url) == "modal":
+            harbor.sweep(job["tag"])
     def apply(self, ev: dict):
         t = ev["type"]
         if t == "job":
             self.count = max(self.count, int(ev["id"][1:]))
             asked = ("id", "by", "params", "commit", "path", "tree", "budget", "to", "at")
-            self.jobs[ev["id"]] = {**{k: ev[k] for k in asked}, "hours": ev.get("hours", HOURS), "status": "queued",
+            self.jobs[ev["id"]] = {**{k: ev[k] for k in asked}, "hours": ev.get("hours", HOURS),
+                                   "harness": ev.get("harness"), "status": "queued",
                                    "started": None, "ended": None, "outcome": None, "artifacts": None, "until": None,
                                    "tag": None}
         elif t == "claim":
@@ -177,7 +203,13 @@ class Jobs:
         if not isinstance(params, dict):
             raise ValueError("params is an object")
         commit, path, tree = self.provenance(req.get("commit"), req.get("path"))
-        params = harbor.check(params, Inputs(self.repo, tree), self.url)
+        agent, harness = params.get("agent"), None
+        if isinstance(agent, str) and agent not in harbor.AGENTS:  # a folder: a harness
+            with contextlib.suppress(ValueError):  # not a folder: harbor.check names the agents there are
+                _, folder, own = self.provenance(commit, agent)
+                if folder != ".":
+                    params, harness = {**params, "agent": folder}, own
+        params = harbor.check(params, Inputs(self.repo, tree), self.url, harness and Inputs(self.repo, harness))
         with self.team.lock:
             jid = self.team.seen(who, nonce, "job")
             if not jid:
@@ -185,8 +217,8 @@ class Jobs:
                 jid = f"j{self.count + 1}"
                 git(self.repo, "update-ref", f"refs/jobs/{jid}", commit)  # so no gc drops what the job ran on
                 self.team.append({"type": "job", "id": jid, "by": who, "params": params, "commit": commit,
-                                  "path": path, "tree": tree, "budget": budget, "hours": hours, "to": conv,
-                                  "nonce": nonce})
+                                  "path": path, "tree": tree, "harness": harness, "budget": budget,
+                                  "hours": hours, "to": conv, "nonce": nonce})
                 self.team.post(conv, who, f"queued job {jid}: {described(self.jobs[jid])}", None, None, quiet=True)
             return {"job": self.view(jid)}
 

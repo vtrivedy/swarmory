@@ -64,15 +64,17 @@ def test_a_stepped_clock_starts_no_second_worker(tmp_path, monkeypatch):
             pass
 
 
-def test_supervisor_reads_live_workers_outside_its_lock():
+def test_supervisor_reads_live_workers_outside_its_lock_and_again_after_another_tick():
     seen = []
 
     class Stub:
         def live(self):
             seen.append(sup.lock.locked())
+            if len(seen) == 1:  # the stop verb's tick runs while the loop's reads what runs
+                sup.tick(clone=False)
             return frozenset()
 
     runs = type("Runs", (), {"loaded": lambda self: []})()
     sup = Supervisor(runs, Stub(), "http://127.0.0.1:7700")
     sup.tick()
-    assert seen == [False]
+    assert seen == [False, False, False] and sup.ticks == 2

@@ -2,10 +2,10 @@
 
     python deepagents_session.py PROVIDER/MODEL PROMPT [--resume]
 
-The agent works in the current folder with the SDK's file tools and an unrestricted shell. Its conversation is a
-SQLite checkpoint in ~/.deepagents/conversations, so --resume carries on where the last session stopped. Before each
-model call it runs `swarmory inbox --hook` and gives the model what came for it. It prints one line of JSON per event,
-in the shape swarmory's traces use (control_plane/traces.py)."""
+The agent works in the current folder with the SDK's file tools and an unrestricted shell, and has the skills in
+~/.agents/skills. Its conversation is a SQLite checkpoint in ~/.deepagents/conversations, so --resume carries on where
+the last session stopped. Before each model call it runs `swarmory inbox --hook` and gives the model what came for it.
+It prints one line of JSON per event, in the shape swarmory's traces use (control_plane/traces.py)."""
 import json
 import os
 import sqlite3
@@ -26,6 +26,7 @@ PROVIDERS = {"anthropic": ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY
 HOME_DIR = Path.home() / ".deepagents"
 CONVERSATIONS = HOME_DIR / "conversations"
 DB = HOME_DIR / "session.db"
+SKILLS = Path.home() / ".agents" / "skills"  # where the worker links the mission's skills
 
 
 def emit(**event):
@@ -84,7 +85,8 @@ def main(name: str, prompt: str, flag: str = ""):
         if flag == "--resume" and saver.get_tuple(config) is None:
             sys.exit(f"There is no conversation to resume in {CONVERSATIONS}.")
         backend = LocalShellBackend(root_dir=os.getcwd(), virtual_mode=False, inherit_env=True, timeout=1800)
-        agent = create_deep_agent(model(name), backend=backend, checkpointer=saver, middleware=[inbox])
+        agent = create_deep_agent(model(name), backend=backend, checkpointer=saver, middleware=[inbox],
+                                  skills=[str(SKILLS)])
         emit(kind="init", model=name, tools=[], mcp=[])
         marked = False
         try:
