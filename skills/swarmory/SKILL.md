@@ -127,20 +127,23 @@ agent   alan       claude-code   claude-sonnet-5-5
 Dry run: nothing started.
 ```
 
-Show the person this output. Agents get random names unless team.toml names them, so the real run's names may differ.
+Show the person this output. Times are in the server's time zone. Agents get random names unless team.toml names
+them, so the real run's names may differ.
 
 **If `server` is not `http://127.0.0.1:7700`,** a saved login points at another server, such as the person's Modal
 server, and the run would go there. If the person wants this machine, ask, then move the login aside and dry-run again:
 
 ```sh
 mv ~/.swarmory/login ~/.swarmory/login.modal    # moving it back returns to that server
+pkill -f '[s]warmory.cli serve'                  # an old local server would refuse the new login
 ```
 
-**If a key is missing,** ask the person to add it as [Keys and models](#keys-and-models) says, then restart the server
-so it reads the key, and dry-run again:
+**If a key is missing,** ask the person to add it as [Keys and models](#keys-and-models) says. The server keeps the
+environment of the shell that started it, and your shell may predate the key, so restart the server from a new shell:
 
 ```sh
 pkill -f '[s]warmory.cli serve'
+$SHELL -ic 'swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run'
 ```
 
 ### 4. Start, on the person's yes
@@ -163,8 +166,9 @@ swarmory issues                  # the board
 swarmory wait --timeout 300      # returns when someone writes to the person; exits 4 after 300 s with none
 ```
 
-Agents keep taking turns, and spending, until the deadline. When the team says the work is done and `swarmory issues`
-shows nothing open, check the code, and stop the run if the person agrees:
+Agents keep taking turns, and spending, until the deadline. Reaching the budget doesn't end the run either: agents stop
+making model calls and wait, and on Modal their sandboxes keep running. When the team says the work is done and
+`swarmory issues` shows nothing open, or the budget is spent, check the code, and stop the run if the person agrees:
 
 ```sh
 swarmory stop RUN
@@ -236,17 +240,19 @@ install only from hosts the run allows.
 | Change a key or login | The person: `uvx modal secret create --force swarmory-server ...` with every value and the same token. Then you run `swarmory deploy`. For a stale ChatGPT login, they run any `codex` command first to refresh `~/.codex/auth.json`. |
 | Replace a lost operator token | The person: create the secret again with a new token, then `swarmory login URL NEWTOKEN`. Then you run `swarmory deploy`. |
 | Stop the server | You, on the person's yes: `swarmory stop RUN` for each run, then `uvx modal app stop swarmory`. Runs stay in `swarmory-data`, and `swarmory deploy` serves them again. |
-| Run locally instead | You, on the person's yes: `mv ~/.swarmory/login ~/.swarmory/login.modal`. Move it back to return to Modal. |
+| Run locally instead | You, on the person's yes: `mv ~/.swarmory/login ~/.swarmory/login.modal`, then `pkill -f '[s]warmory.cli serve'`. Move the file back to return to Modal. |
 
 ## Keys and models
 
-`--team HARNESS:MODEL=COUNT`, repeated to mix agents. Any coding agent can use any provider's model.
+`--team HARNESS:MODEL=COUNT`, repeated to mix agents. With API keys, `claude-code`, `codex`, `pi` and `deepagents` can
+use any provider's model, and `antigravity` only Gemini models. With `--subscription`, each agent uses its own
+provider's models, which the dry run checks.
 
 | Model | Key the server needs | Example |
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-code:claude-sonnet-5-5=2`, `codex:anthropic/claude-sonnet-5-5=1` |
 | OpenAI | `OPENAI_API_KEY` | `codex:gpt-6.1-sol=2`, `claude-code:openai/gpt-6.1-sol=1` |
-| Gemini | `GEMINI_API_KEY` | `antigravity:gemini-3.8-flash-low=1`, `pi:gemini/gemini-4-argon=1` |
+| Gemini | `GEMINI_API_KEY` | `antigravity:gemini-3.8-flash=1`, `pi:gemini/gemini-4-argon=1` |
 | Any other in LiteLLM's price table | `<PROVIDER>_API_KEY` | `codex:xai/grok-4.3=1` needs `XAI_API_KEY` |
 
 To use the person's Claude or ChatGPT plan instead, add `--subscription`. It works for `claude-code` and `codex` agents,
@@ -257,11 +263,12 @@ and needs the login of each one the team uses:
 | `claude-code` | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` |
 | `codex` | `CODEX_AUTH_JSON` | `export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"`, after `codex login` |
 
-Every agent draws on the plan's usage limits, which the person's own Claude or ChatGPT use shares, so a big team can
-use them up for hours. Tell the person, and start with 2 to 4 agents. When a limit is hit, an agent's session fails,
-and it tries again a minute later until the deadline. After two failures in a row it starts a fresh conversation, with
-its clone, the board and the chat as they were. In `swarmory status`, such an agent's sessions climb while its calls don't. Stop
-the run, or wait for the limit to reset. Teams larger than 4 haven't been tested on a plan.
+Every agent draws on the plan's usage limits, which the person's own Claude or ChatGPT use shares, so a big team can use
+them up for hours. Tell the person, and start with 2 to 4 agents. When a limit is hit, an agent's session fails, and it
+tries again a minute later until the deadline. After two failures in a row it starts a fresh conversation, with its
+clone, the board and the chat as they were. In `swarmory status`, such an agent's sessions climb while its calls don't.
+Stop the run, or wait for the limit to reset. Teams larger than 4 haven't been tested on a plan. `--budget` still counts
+calls at list prices on a plan and stops them past it; use it as a cap on how much of the plan a run takes.
 
 The person puts each key or login in their shell profile, such as `~/.zshrc`, or on Modal in the `swarmory-server`
 secret. Check one is set without printing it:
@@ -287,9 +294,10 @@ wordfreq/
   ...              starting code, data, docs
 ```
 
-Everything in the folder reaches the agents, except what `.gitignore` ignores, `.env*`, `*.pem`, `*.key`, and
-symlinks out of the folder that don't lead to a skill. Leave out answers and private notes. `setup.sh` must work on
-this machine and in a Debian sandbox.
+Everything in the folder reaches the agents, except what `.gitignore` ignores, `.git`, `.env*`, `*.pem`, `*.key`, and
+any symlink that points outside the folder. Leave out answers and private notes. `setup.sh` must work on this machine
+and in a Debian sandbox. If it fails, the agent starts anyway and the failure is only in its `agent.log`, so try it on
+this machine first.
 
 ### team.toml
 
@@ -314,10 +322,10 @@ args = ["-c", "model_reasoning_effort=high"]
 | Field | Required | Where it goes |
 |---|---|---|
 | `harness` | yes | Which coding agent runs it: `claude-code`, `codex`, `antigravity`, `pi`, `deepagents`, or a custom one (below). |
-| `model` | no | The agent's CLI gets it as its model flag, and the gateway picks the provider and key from it. Name a model of another provider as `openai/...`, `anthropic/...` or `gemini/...`. Without it, the CLI's default model; `pi`, `deepagents` and custom agents must have one, named with its provider. |
-| `name` | no | The agent's name in the chat, roster and viewer, and its id lowercased, such as `lead`. Without it, a random name. A named entry has no `count`. Not `all`, `channel`, `here`, `general`, `me`, or the person's id. |
-| `role` | no | One line. Every agent's roster shows it as "Role: ...", and the agent's own prompt opens with "Your role: ...". |
-| `args` | no | Added as-is to the end of the agent's CLI command. Not for `deepagents`. |
+| `model` | no | The agent's CLI gets it as its model flag, and the gateway picks the provider and key from it. Name a model of another provider as `openai/...`, `anthropic/...` or `gemini/...`. Required with a budget, so its price can be checked. With `--budget none` it can be left out for the CLI's default model, except for `pi`, `deepagents` and custom agents, which need one named with its provider. |
+| `name` | no | The agent's name in the chat, roster and viewer, and its id lowercased, such as `lead`. Without it, a random name. A named entry has no `count`. The id keeps a-z, 0-9 and `-`, starts with a letter, and isn't `all`, `channel`, `here`, `general`, `me`, an issue id such as `i4`, or the person's id. |
+| `role` | no | One line. Every agent's roster shows it as "Role: ...", and the agent's own prompt says "Your role: ..." after the roster. |
+| `args` | no | Added as-is to the agent's CLI command. Not for `deepagents`. |
 | `count` | no | How many agents like this one. Default 1. |
 
 Any other field is refused. To see what each agent gets:
@@ -384,6 +392,6 @@ Look for these:
 
 Fix what you see in the next run's mission, not with messages: roles in team.toml, coordination in BRIEF.md, and
 checks or notes agents lacked. Show the person each change and why. From a clone of the repo,
-`uv run tools/compare.py RUN OTHER_RUN` compares two exported runs.
+`uv run tools/compare.py ~/runs/RUN ~/runs/OTHER_RUN` compares two exported runs.
 
 `swarmory mcp` serves these commands as MCP tools: `claude mcp add swarmory -- swarmory mcp`.

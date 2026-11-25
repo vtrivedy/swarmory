@@ -698,7 +698,9 @@ def mcp():
             tool["inputSchema"]["properties"]["run"] = run
     start = tools["start"]["inputSchema"]
     del start["properties"]["me"]  # start_run() works it out, as `swarmory start` does
-    start["required"] = ["mission"]
+    start["required"] = ["mission", "budget"]  # as `swarmory start --budget`: no limit is said, never assumed
+    start["properties"]["budget"] = {"type": ["number", "null"], "description": "the most its model calls may cost, "
+                                     "in dollars at list prices, or null for no limit"}
     start["properties"]["mission"]["description"] = ("the path of a mission folder on this machine: BRIEF.md and "
                                                      "whatever the team needs")
     start["properties"]["team"]["description"] += " (default: the mission's team.toml, else two of the first harness)"

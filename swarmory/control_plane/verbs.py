@@ -313,8 +313,8 @@ def find(server, req: dict):
 
 
 def start(server, req: dict, token: str) -> dict:
-    priced = (lambda m: server.litellm.find(m)[1] is not None) if server.litellm.table else None
-    config, view = new_run(req, server.backend, os.environ, token, lambda m: server.litellm.find(m)[0], priced)
+    config, view = new_run(req, server.backend, os.environ, token, lambda m: server.litellm.find(m)[0],
+                           lambda m: server.litellm.find(m)[1] is not None)
     if req.get("dry"):
         return {"dry": True, "server": server.url, "deadline": config["deadline"],
                 "budget": config["budget"], "me": config["operator"],

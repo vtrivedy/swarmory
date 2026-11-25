@@ -66,24 +66,27 @@ swarmory start MISSION --budget 20 --team claude-code:claude-sonnet-5-5=4 --team
 |---|---|---|
 | `claude-code` | Claude Code (`claude`) | Any model: `claude-sonnet-5-5`, `openai/gpt-6.1-sol` |
 | `codex` | Codex (`codex`) | Any model: `gpt-6.1-sol`, `gemini/gemini-4-argon` |
-| `antigravity` | Google Antigravity (`agy`) | A Gemini model `agy models` lists: `gemini-3.8-flash-low` |
+| `antigravity` | Google Antigravity (`agy`) | A Gemini model `agy models` lists: `gemini-3.8-flash` |
 | `pi` | [pi](https://github.com/badlogic/pi-mono) (`pi`) | `anthropic/...`, `openai/...` or `gemini/...`: `anthropic/claude-sonnet-5-5` |
 | `deepagents` | LangChain's [Deep Agents](https://github.com/langchain-ai/deepagents) SDK, run with uv | `anthropic/...`, `openai/...` or `gemini/...`: `openai/gpt-6-luna` |
 
 The server needs the key of each model's provider in `<PROVIDER>_API_KEY`, and prices calls from
-[LiteLLM](https://github.com/BerriAI/litellm)'s table.
+[LiteLLM](https://github.com/BerriAI/litellm)'s table. With a budget, name each agent's model: the dry run refuses one
+the table doesn't price.
 
 For names, roles, and harness flags, put a `team.toml` in the mission folder instead:
 
 ```toml
 [[agent]]
 harness = "claude-code"
+model = "claude-sonnet-5-5"
 name = "lead"
 role = "Split the work into issues and review every push."
 args = ["--effort", "high"]
 
 [[agent]]
 harness = "codex"
+model = "gpt-6.1-sol"
 count = 5
 args = ["-c", "model_reasoning_effort=high"]
 ```
@@ -148,12 +151,13 @@ The team's work is a git repo. On a local server, `git clone ~/.swarmory/data/ru
 ```sh
 export CLAUDE_CODE_OAUTH_TOKEN=...
 export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"
-swarmory start MISSION --budget 5 --subscription
+swarmory start MISSION --team claude-code:claude-sonnet-5-5=2 --team codex:gpt-6.1-sol=2 --budget 5 --subscription
 ```
 
 `claude setup-token` prints the first value. On Modal, put both in the `swarmory-server` secret instead. The server
 never refreshes the ChatGPT login, so run any `codex` command just before `start`, and on Modal put the fresh
-`auth.json` in the secret again.
+`auth.json` in the secret again. On a plan, `claude-code` agents use Anthropic models and `codex` agents OpenAI models,
+and they share the plan's usage limits with your own use. `--budget` still caps the run at list prices.
 
 ## Run on Modal
 

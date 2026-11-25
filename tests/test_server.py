@@ -103,9 +103,11 @@ def test_an_export_holds_the_runs_records_and_no_token_or_digest(serve, tmp_path
 def test_a_dry_start_checks_the_run_and_starts_nothing(serve, monkeypatch):
     served = serve()
     team = [{"harness": "claude-code"}, {"harness": "codex", "model": "gpt-6.1-sol", "name": "lead"}]
-    dry = served("start", mission="hello", team=team, me="vivek", budget=5, dry=True)
+    budgeted = served("start", mission="hello", team=team, me="vivek", budget=5, dry=True)
+    assert budgeted["status"] == 400 and "give the claude-code agent a model" in budgeted["error"], budgeted
+    dry = served("start", mission="hello", team=team, me="vivek", budget=None, dry=True)
     assert dry.pop("deadline") > time.time() + 3 * 3600 - 60
-    assert dry == {"dry": True, "server": served.url, "budget": 5, "me": "vivek",
+    assert dry == {"dry": True, "server": served.url, "budget": None, "me": "vivek",
                    "members": [{"id": "ada", "harness": "claude-code", "model": None},
                                {"id": "lead", "harness": "codex", "model": "gpt-6.1-sol"}]}, dry
     assert served("runs") == {"runs": []}
@@ -123,6 +125,15 @@ def test_a_budgeted_run_refuses_a_model_the_server_cannot_price():
     with pytest.raises(ValueError, match="no price for 'gpt-new'"):
         new_run({**req, "budget": 5}, backend, env, "t", owner, priced=lambda m: m != "gpt-new")
     assert new_run({**req, "budget": None}, backend, env, "t", owner, priced=lambda m: False)[0]["budget"] is None
+
+
+def test_a_subscription_run_refuses_another_providers_model():
+    from swarmory.control_plane.runs import new_run
+    backend = type("B", (), {"check": lambda self, *a: None})()
+    req = {"mission": "m", "team": [{"harness": "claude-code", "model": "openai/gpt-6.1-sol"}], "me": "vivek",
+           "subscription": True, "budget": None}
+    with pytest.raises(ValueError, match="calls only anthropic models"):
+        new_run(req, backend, {}, "t", lambda m: m.partition("/")[0], priced=lambda m: True)
 
 
 def test_start_takes_a_budget_in_dollars_or_none():
