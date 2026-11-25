@@ -38,11 +38,13 @@ the API keys and makes every model call. The person is a member of the run, and 
 The server and the agents run either on this machine or on Modal. Use this machine unless the person asks for Modal.
 
 - **This machine** (the default). `swarmory start` starts the server in the background. Each agent is a process on
-  this machine, running as the person, so this machine needs the CLI of every coding agent in the team. Keys come from
-  the shell that ran `swarmory start`. This machine must stay awake for the whole run.
-- **Modal**, a cloud. `swarmory deploy` starts the server there, and each agent gets its own sandbox, which can reach
-  only the server. This machine needs only swarmory. Keys live in a Modal secret. Runs go on with the laptop closed,
-  and agents never see a key. See [Run on Modal](#run-on-modal).
+  this machine, running as the person with its permission prompts off, so it can change any file the person can. This
+  machine needs the CLI of every coding agent in the team, and must stay awake for the whole run.
+- **Modal**, a cloud. The server runs there all the time, and each agent runs in its own sandbox. This machine needs
+  only swarmory. Runs go on with the laptop closed, and agents never see a key. See [Run on Modal](#run-on-modal).
+
+`swarmory login` prints the server that `swarmory` commands go to, without the token. With no login, `start` uses a
+local server.
 
 ## Run on this machine
 
@@ -141,8 +143,9 @@ swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hour
 ```
 
 It prints the run's id, the mission's name, the start time and a random suffix, such as `wordfreq-1124-1930-ab12`
-(RUN below). It also prints the viewer link, a read-only web page of the whole run. Give the person the link, and tell them anyone they share it with sees the run. Every later `swarmory` command acts in this run.
-Keep this machine awake until the run ends.
+(RUN below). It also prints the viewer link, a read-only web page of the whole run. Give the person the link, and tell
+them anyone they share it with sees the run. Every later `swarmory` command acts in this run; `swarmory runs` lists
+the server's runs, and `swarmory use RUN` switches to another. Keep this machine awake until the run ends.
 
 ### 5. Watch, stop, get the code
 
@@ -168,31 +171,58 @@ The local server keeps running after the run. Stop it with `pkill -f '[s]warmory
 
 ## Run on Modal
 
-Install swarmory with Modal support and check for a Modal login:
+`swarmory deploy` puts these in the person's Modal account:
+
+| What | Name in Modal | What it does |
+|---|---|---|
+| The server | app `swarmory` | One container, always on, so it costs compute between runs too. It holds every run, makes every model call, and starts the agents. Its URL is public; every request needs a token. |
+| The agents | app `swarmory-workers` | One sandbox per agent, from an image with every coding agent's CLI. It reaches only the server, plus hosts that `--allow` adds. It stops when the run ends. |
+| The keys | secret `swarmory-server` | The provider keys or subscription logins, and the operator token. Only the server gets it. Agents get a run token, which the server takes in place of a key. |
+| The runs | volume `swarmory-data` | Every run's repo, chat, board and transcripts. It outlives deploys. |
+
+### 1. Check for a server first
 
 ```sh
-uv tool install 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'
-uvx modal profile current        # fails with no login: the person runs `uvx modal setup`
+swarmory login                   # a modal.run URL means the person already has one: skip to step 3
+uvx modal profile current        # fails with no Modal login: the person runs `uvx modal setup`
 ```
 
-The person runs these in their own terminal, since they hold the keys and the token. `deploy` starts a server that
-spends Modal compute all the time.
+### 2. Set it up once
+
+First the person creates the secret in their own terminal, since it holds the keys and the token. It lists the key or
+login of each provider the team will use (see [Keys and models](#keys-and-models)):
 
 ```sh
-TOKEN=$(openssl rand -hex 16)    # the operator token: keep it, Modal won't show it again
+TOKEN=$(openssl rand -hex 16)    # the operator token: keep this terminal open, Modal won't show it again
 uvx modal secret create swarmory-server SWARMORY_OPERATOR_TOKEN=$TOKEN ANTHROPIC_API_KEY=... OPENAI_API_KEY=...
+```
+
+For `--subscription`, the secret holds `CLAUDE_CODE_OAUTH_TOKEN=...` and `CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"`
+in place of the keys. Then, on the person's yes, you install swarmory with Modal support and deploy:
+
+```sh
+uv tool install --force 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'
 swarmory deploy                  # prints the server's URL
+```
+
+Last, the person logs in from that same terminal, with the URL `deploy` printed:
+
+```sh
 swarmory login URL $TOKEN
 ```
 
-After `login`, every `swarmory` command goes to the Modal server, and steps 2 to 5 above work the same.
+### 3. Run
 
-| To | Run |
+Steps 2 to 5 of [Run on this machine](#run-on-this-machine) work the same, and the dry run's `server` line shows the
+Modal URL. `setup.sh` runs in each agent's sandbox, so it can install only from hosts the run allows.
+
+| To | Who runs it |
 |---|---|
-| Update | `uv tool upgrade swarmory`, then `swarmory deploy`. Running agents go on, and the URL stays. |
-| Change a key | The person runs `uvx modal secret create --force swarmory-server ...` with every value and the same token, then `swarmory deploy`. |
-| Stop the server | `swarmory stop RUN` for each run, then `uvx modal app stop swarmory`. Runs stay in `swarmory-data`. |
-| Go back to local | `mv ~/.swarmory/login ~/.swarmory/login.modal`, then `pkill -f '[s]warmory.cli serve'`. Move the file back to return to Modal. |
+| Update the server | You, on the person's yes: `uv tool upgrade swarmory`, then `swarmory deploy`. Running agents go on, and the URL stays. |
+| Change a key or login | The person: `uvx modal secret create --force swarmory-server ...` with every value and the same token. Then you run `swarmory deploy`. The ChatGPT login goes stale, so they refresh it this way before a codex run if it fails. |
+| Replace a lost operator token | The person: create the secret again with a new token, then `swarmory login URL NEWTOKEN`. Then you run `swarmory deploy`. |
+| Stop the server | You, on the person's yes: `swarmory stop RUN` for each run, then `uvx modal app stop swarmory`. Runs stay in `swarmory-data`, and `swarmory deploy` serves them again. |
+| Run locally instead | You, on the person's yes: `mv ~/.swarmory/login ~/.swarmory/login.modal`. Move it back to return to Modal. |
 
 ## Keys and models
 
@@ -238,10 +268,13 @@ wordfreq/
 ```
 
 Everything in the folder reaches the agents, except what `.gitignore` ignores, `.env*`, `*.pem`, `*.key`, and
-symlinks out of the folder. Leave out answers and private notes. `setup.sh` must work on this machine and in a Debian
-sandbox.
+symlinks out of the folder that don't lead to a skill. Leave out answers and private notes. `setup.sh` must work on
+this machine and in a Debian sandbox.
 
-`team.toml`, used when `start` has no `--team`:
+### team.toml
+
+`start` reads `team.toml` from the mission folder when it has no `--team`. `--team` replaces it, and doesn't merge
+with it. Each `[[agent]]` is one agent, or `count` alike:
 
 ```toml
 [[agent]]
@@ -249,6 +282,7 @@ harness = "claude-code"
 model = "claude-sonnet-5-5"
 name = "lead"
 role = "Split the work into issues and review every push."
+args = ["--effort", "high"]
 
 [[agent]]
 harness = "codex"
@@ -256,6 +290,38 @@ model = "gpt-6.1-sol"
 count = 3
 args = ["-c", "model_reasoning_effort=high"]
 ```
+
+| Field | Required | Where it goes |
+|---|---|---|
+| `harness` | yes | Which coding agent runs it: `claude-code`, `codex`, `antigravity`, `pi`, `deepagents`, or a custom one (below). |
+| `model` | no | The agent's CLI gets it as its model flag, and the gateway picks the provider and key from it. Name a model of another provider as `openai/...`, `anthropic/...` or `gemini/...`. Without it, the CLI's default model; `pi`, `deepagents` and custom agents must have one, named with its provider. |
+| `name` | no | The agent's name in the chat, roster and viewer, and its id lowercased, such as `lead`. Without it, a random name. A named entry has no `count`. Not `all`, `channel`, `here`, `general`, `me`, or the person's id. |
+| `role` | no | One line. Every agent's roster shows it as "Role: ...", and the agent's own prompt opens with "Your role: ...". |
+| `args` | no | Added as-is to the end of the agent's CLI command. Not for `deepagents`. |
+| `count` | no | How many agents like this one. Default 1. |
+
+Any other field is refused. To see what each agent gets:
+
+- Its whole prompt, where `role` goes: [swarmory/worker/prompt.md](https://github.com/vtrivedy/swarmory/blob/main/swarmory/worker/prompt.md).
+- The command each coding agent runs, which `args` extends:
+  [swarmory/harness/](https://github.com/vtrivedy/swarmory/tree/main/swarmory/harness). swarmory already sets the
+  prompt, the output format, resuming, skipping permission prompts, and the model, so `args` must not repeat those.
+- What `args` can be: the CLI's own help, such as `claude --help` or `codex exec --help`.
+
+A coding agent swarmory doesn't build in needs `run` and `resume`, the commands that run it headless. Each holds
+`{prompt}`, and may hold `{model}`, `{provider}` and `{model_id}`. `setup`, optional, runs in a shell before each
+session. The agent gets the gateway's address and its run token in `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`,
+`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY`. Its `model` names its provider.
+
+```toml
+[[agent]]
+harness = "my-agent"
+model = "anthropic/claude-sonnet-5-5"
+run = "my-agent --headless --model {model} {prompt}"
+resume = "my-agent --headless --continue --model {model} {prompt}"
+```
+
+### Skills, grants and other options
 
 To give agents a skill, run this in the mission folder. Claude Code and Codex find it on their own. For other coding
 agents, name its path in BRIEF.md.
