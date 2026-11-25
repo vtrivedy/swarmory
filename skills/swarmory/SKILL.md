@@ -24,7 +24,7 @@ every command and flag.
    `swarmory deploy`.
 2. **Never touch a secret.** Don't read, print, write or pass a model key, a subscription login, or the operator token.
    No `cat .env`, no `env | grep KEY`, no reading `~/.codex/auth.json` or `~/.swarmory/login`. The person sets keys in
-   their own shell or Modal secret.
+   their own terminal or Modal secret. Moving `~/.swarmory/login` aside with `mv`, on the person's yes, is fine.
 
 ## How it works
 
@@ -74,7 +74,7 @@ If it is empty, ask the person for their name and set it with `git config --glob
 ### 2. Write the mission
 
 ```sh
-mkdir -p ~/missions/wordfreq && cd ~/missions/wordfreq
+mkdir -p ~/missions/wordfreq
 ```
 
 `~/missions/wordfreq/BRIEF.md`:
@@ -99,15 +99,13 @@ One agent writes wc.py and the other writes the tests. Each pushes small commits
 
 ### 3. Dry run
 
-The server needs the key for each model's provider. Here that is `ANTHROPIC_API_KEY`, which the person exports in the
-shell that runs `swarmory`:
-
 ```sh
 swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
 ```
 
-It starts the local server if none is running, checks the run, and starts nothing. If a key or a coding agent is
-missing, it exits non-zero and names it. It checks that a key is set, not that it works. On success it prints:
+`--hours` takes decimals: 0.5 is 30 minutes. The dry run starts the local server if none is running, checks the run,
+and starts nothing. If a key or a coding agent is missing, it exits non-zero and names it. It checks that a key is set,
+not that it works. On success it prints:
 
 ```
 No server answers at http://127.0.0.1:7700: starting one here (`swarmory serve`, its output in ~/.swarmory/serve.log)...
@@ -121,14 +119,25 @@ Dry run: nothing started.
 ```
 
 Show the person this output. Agents get random names unless team.toml names them, so the real run's names may differ.
-A `server` other than `http://127.0.0.1:7700` means a `swarmory login` points at another server.
 
-If a key is missing, ask the person to export it and run you again from that shell, then stop the old server so the
-next command starts one with the key:
+**If `server` is not `http://127.0.0.1:7700`,** a saved login points at another server, such as the person's Modal
+server, and the run would go there. If the person wants this machine, ask, then move the login aside and dry-run again:
 
 ```sh
-pkill -f '[s]warmory.cli serve'
+mv ~/.swarmory/login ~/.swarmory/login.modal    # moving it back returns to that server
 ```
+
+**If a key is missing,** the local server lacks it. The server keeps the environment of the shell that started it, and
+your shell is not the person's terminal. So ask the person to run these in their own terminal, with the key the error
+names, then run the dry run again yourself:
+
+```sh
+export ANTHROPIC_API_KEY=...
+pkill -f '[s]warmory.cli serve'
+swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
+```
+
+Their dry run starts a server with their key, and your commands then use it.
 
 ### 4. Start, on the person's yes
 
@@ -136,8 +145,8 @@ pkill -f '[s]warmory.cli serve'
 swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5
 ```
 
-It prints the run's id, such as `wordfreq-1124-1930-ab12` (RUN below), and the viewer link, a read-only web page of the whole run. Give the
-person the link, and tell them anyone they share it with sees the run. Every later `swarmory` command acts in this run.
+It prints the run's id, the mission's name, the start time and a random suffix, such as `wordfreq-1124-1930-ab12`
+(RUN below). It also prints the viewer link, a read-only web page of the whole run. Give the person the link, and tell them anyone they share it with sees the run. Every later `swarmory` command acts in this run.
 Keep this machine awake until the run ends.
 
 ### 5. Watch, stop, get the code
@@ -193,10 +202,17 @@ After `login`, every `swarmory` command goes to the Modal server, and steps 2 to
 | Gemini | `GEMINI_API_KEY` | `antigravity:gemini-3.8-flash-low=1`, `pi:gemini/gemini-4-argon=1` |
 | Any other in LiteLLM's price table | `<PROVIDER>_API_KEY` | `codex:xai/grok-4.3=1` needs `XAI_API_KEY` |
 
-To use the person's Claude or ChatGPT plan instead of keys, add `--subscription`. The server then needs
-`CLAUDE_CODE_OAUTH_TOKEN` (the person gets it from `claude setup-token`) and `CODEX_AUTH_JSON` (the contents of
-`~/.codex/auth.json`), in its shell or in `swarmory-server`. Ask the person to run any `codex` command just before
-`start`, since the server never refreshes that login. Only Anthropic and OpenAI models work this way.
+To use the person's Claude or ChatGPT plan instead of keys, add `--subscription`. Only `claude-code` and `codex` agents
+work this way, and the server needs the login of each one the team uses, in place of keys. The dry run checks it. For a
+local server, the person sets it in their own terminal as in [step 3](#3-dry-run):
+
+```sh
+export CLAUDE_CODE_OAUTH_TOKEN=...                   # claude-code agents: `claude setup-token` prints it
+export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"   # codex agents
+```
+
+On Modal, the logins go in the `swarmory-server` secret instead. The server never refreshes the ChatGPT login, so the
+person runs any `codex` command just before setting it.
 
 ## Write the mission
 
