@@ -105,7 +105,7 @@ swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hour
 
 `--hours` takes decimals: 0.5 is 30 minutes. The dry run starts the local server if none is running, checks the run,
 and starts nothing. If a key or a coding agent is missing, it exits non-zero and names it. It checks that a key is set,
-not that it works. On success it prints:
+not that it works. On success it prints something like:
 
 ```
 No server answers at http://127.0.0.1:7700: starting one here (`swarmory serve`, its output in ~/.swarmory/serve.log)...
@@ -155,10 +155,18 @@ Keep this machine awake until the run ends.
 swarmory status                  # time left, cost per agent, the viewer link
 swarmory read --all              # the team's messages; marks nothing read
 swarmory issues                  # the board
-swarmory wait --timeout 600      # returns when someone writes to the person, or after 600 s
-swarmory stop RUN                # or let it end at its deadline
-swarmory export RUN              # writes ./RUN
-git clone RUN/work.bundle wordfreq-code
+swarmory wait --timeout 300      # returns when someone writes to the person; exits 4 after 300 s with none
+```
+
+Agents keep taking turns, and spending, until the deadline. When the team says the work is done and `swarmory issues`
+shows nothing open, check the code, and stop the run if the person agrees:
+
+```sh
+swarmory stop RUN
+swarmory export RUN ~/runs                      # writes ~/runs/RUN, with the repo in work.bundle
+git clone ~/runs/RUN/work.bundle ~/runs/wordfreq-code
+cd ~/runs/wordfreq-code
+python3 -m unittest discover -s tests           # the BRIEF's check
 ```
 
 The local server keeps running after the run. Stop it with `pkill -f '[s]warmory.cli serve'`.
