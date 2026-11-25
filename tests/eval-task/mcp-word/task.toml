@@ -1,0 +1,26 @@
+schema_version = "1.4"
+artifacts = ["/app/output"]
+
+[task]
+name = "swarmory/mcp-word"
+version = "1.0.0"
+description = "Learn a word from the environment's MCP server and write it to a file: a task for testing custom harnesses"
+
+[environment]
+network_mode = "no-network"
+cpus = 1
+memory_mb = 2048
+
+# Baked into the image by environment/Dockerfile. A harness starts it as a child process, so it needs no network.
+[[environment.mcp_servers]]
+name = "env"
+transport = "stdio"
+command = "python3"
+args = ["/opt/env-mcp/server.py"]
+
+[agent]
+user = "agent"
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 120.0

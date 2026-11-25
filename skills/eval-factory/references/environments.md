@@ -53,8 +53,9 @@ Default to frozen or simulated. An eval never writes to anything real.
 ## Services and simulated users
 
 - **Run mock services inside the task.** The solver has no network, so run each service in the environment, as a
-  process in the main container or as another service in `docker-compose.yaml`. Keep real tool names, schemas and
-  errors, and replace only what's behind them.
+  process in the main container that `environment/Dockerfile` installs. A swarmory job refuses a
+  `docker-compose.yaml`, so don't add services that way. Keep real tool names, schemas and errors, and replace only
+  what's behind them.
 - **Let the service keep the record.** When the path matters, have the service log every call it receives. The
   verifier reads that log, which the solver can't edit.
 - **Script the failures you're testing.** A service that fails the first call and succeeds on the second turns "gives

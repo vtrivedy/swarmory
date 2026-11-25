@@ -16,7 +16,6 @@ import sys
 import time
 from pathlib import Path
 
-from swarmory import harbor
 
 from .base import WorkerSpec
 
@@ -59,6 +58,8 @@ def running(r) -> bool:
 
 
 class Local:
+    kind = "local"
+
     def __init__(self, data: Path):
         self.data, self.pids = Path(data), Path(data) / "workers"
         self.children = {}  # name: the Popen of a worker this server started, polled so it leaves no zombie
@@ -84,8 +85,8 @@ class Local:
                        HOME=str(home / "home"),
                        # the person's uv cache, so uv downloads each package once for every agent
                        UV_CACHE_DIR=os.environ.get("UV_CACHE_DIR") or str(Path.home() / ".cache" / "uv"))
-        else:  # a job's worker: the server's HOME, and Harbor's Modal token if the server's environment has it
-            names = harbor.MODAL
+        else:  # a job's worker: the server's HOME, and the variables its spec names, if the server's environment has them
+            names = spec.grants
             env.update(PATH=f"{self.data / 'bin'}:{tools()}", HOME=os.environ.get("HOME", str(home)))
         env.update(GIT_CONFIG_NOSYSTEM="1",  # skips e.g. macOS git's osxkeychain helper, which hangs a headless clone
                    **spec.env, **{n: os.environ[n] for n in names if n in os.environ})

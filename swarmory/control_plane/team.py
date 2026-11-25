@@ -14,6 +14,8 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from swarmory import HOLD
+
 from .policy import sha
 
 MENTION = re.compile(r"(?<![\w@])@([A-Za-z][\w-]*)")
@@ -553,9 +555,9 @@ class Team:
 
     def wait(self, who: str, req: dict, gone=lambda: False, head=lambda: None) -> dict:
         """`who` has nothing to do until someone writes to it. Holds up to req's timeout (0 by default, at most
-        300 s) for messages addressed to it; returns what changed if they came, else {"done": false}. An agent that
-        waits starts its next turn on a message, or IDLE seconds after it began to wait."""
-        timeout = number(req, "timeout", 0, 0, 300)
+        HOLD seconds) for messages addressed to it; returns what changed if they came, else {"done": false}. An agent
+        that waits starts its next turn on a message, or IDLE seconds after it began to wait."""
+        timeout = number(req, "timeout", 0, 0, HOLD)
         with self.lock:
             if who not in self.waiting:
                 self.append({"type": "wait", "member": who})
@@ -571,9 +573,9 @@ class Team:
 
     def next(self, who: str, req: dict, gone=lambda: False, head=lambda: None) -> dict:
         """An agent's worker, between two turns: the next turn starts at once, unless the agent waits; then on a
-        message for it, or IDLE seconds after it began to wait. Holds up to req's timeout (at most 300 s), then
+        message for it, or IDLE seconds after it began to wait. Holds up to req's timeout (at most HOLD seconds), then
         answers {"done": false}; call again."""
-        end, ticket = time.time() + number(req, "timeout", 300, 0, 300), None
+        end, ticket = time.time() + number(req, "timeout", HOLD, 0, HOLD), None
         with self.lock:
             if who in self.waiting:
                 start = self.waiting[who] + IDLE

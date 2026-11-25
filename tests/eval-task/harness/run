@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""A custom harness for `swarmory job harbor --agent tests/eval-task/harness`: a model loop over the task's MCP tools,
+with only Python's standard library. It starts each stdio MCP server in $MCP_CONFIG, offers their tools to $MODEL
+through the run's gateway ($ANTHROPIC_BASE_URL, with $ANTHROPIC_API_KEY), runs the tool calls the model makes, and
+stops when the model answers without one."""
+import json
+import os
+import subprocess
+import urllib.request
+
+
+class MCP:
+    """One stdio MCP server, as a child process."""
+
+    def __init__(self, server: dict):
+        self.p = subprocess.Popen([server["command"], *server.get("args", [])], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True)
+        self.n = 0
+        self.ask("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                "clientInfo": {"name": "harness", "version": "1"}})
+        self.say({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def say(self, msg: dict):
+        self.p.stdin.write(json.dumps(msg) + "\n")
+        self.p.stdin.flush()
+
+    def ask(self, method: str, params: dict) -> dict:
+        self.n += 1
+        self.say({"jsonrpc": "2.0", "id": self.n, "method": method, "params": params})
+        reply = json.loads(self.p.stdout.readline())
+        if "error" in reply:
+            raise RuntimeError(f"{method}: {reply['error']}")
+        return reply["result"]
+
+
+def model(messages: list, tools: list) -> dict:
+    body = {"model": os.environ["MODEL"], "max_tokens": 1024, "messages": messages, "tools": tools}
+    req = urllib.request.Request(os.environ["ANTHROPIC_BASE_URL"].rstrip("/") + "/v1/messages",
+                                 json.dumps(body).encode(), {"content-type": "application/json",
+                                                             "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                                                             "anthropic-version": "2023-06-01"})
+    with urllib.request.urlopen(req, timeout=300) as r:
+        return json.load(r)
+
+
+servers = json.load(open(os.environ["MCP_CONFIG"]))["mcpServers"]
+owner, tools = {}, []  # tool name: its server; and each tool as the model sees it
+for name, server in servers.items():
+    if server.get("transport") == "stdio":
+        mcp = MCP(server)
+        for t in mcp.ask("tools/list", {})["tools"]:
+            owner[t["name"]] = mcp
+            tools.append({"name": t["name"], "description": t.get("description", ""),
+                          "input_schema": t["inputSchema"]})
+print(f"tools: {sorted(owner)}", flush=True)
+
+messages = [{"role": "user", "content": os.environ["HARBOR_INSTRUCTION"]}]
+for _ in range(20):
+    reply = model(messages, tools)
+    messages.append({"role": "assistant", "content": reply["content"]})
+    calls = [b for b in reply["content"] if b["type"] == "tool_use"]
+    for b in reply["content"]:
+        print(f"model: {json.dumps(b)}", flush=True)
+    if not calls:
+        break
+    results = []
+    for c in calls:
+        out = owner[c["name"]].ask("tools/call", {"name": c["name"], "arguments": c["input"]})
+        text = "".join(part.get("text", "") for part in out["content"])
+        print(f"{c['name']}: {text}", flush=True)
+        results.append({"type": "tool_result", "tool_use_id": c["id"], "content": text,
+                        "is_error": bool(out.get("isError"))})
+    messages.append({"role": "user", "content": results})

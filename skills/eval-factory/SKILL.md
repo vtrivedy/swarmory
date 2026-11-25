@@ -9,6 +9,11 @@ This skill helps you design evals that tell you something true about a model or 
 tasks, and each task is an instruction, an environment and a verifier. The principles below are the rules. The order
 of work is the usual one, not a required one.
 
+In a swarmory run, the run runs Harbor for you. You never run `harbor`, `docker` or `modal` yourself, and you hold no
+Modal token. Commit a finished task folder and run `swarmory job harbor PATH`, as the running-harbor-jobs skill says.
+Where this skill or the create-task and rewardkit skills show a `harbor` or `docker` command, that skill takes
+precedence.
+
 Start by building a map of the skill. Read this page, then list every section of the references:
 
 ```bash
@@ -99,8 +104,8 @@ Design the verifier that tells the two apart. Write the instruction last.
 | [improving-an-agent.md](references/improving-an-agent.md) | Build evals for your own agent | Which of its failures to turn into tasks |
 | [environments.md](references/environments.md) | Plan the data, tools, services, simulated users or opponents | What the solver sees, can do and can check |
 | [verifiers.md](references/verifiers.md) | Write the verifier and the instruction | How a pass is decided, and which stored cases prove it |
-| [verifying.md](references/verifying.md) | Have a task folder to check | Whether it works on Modal, with no model |
-| [running.md](references/running.md) | Are about to run models | The exact `harbor run` command, and how to rerun or regrade |
+| [verifying.md](references/verifying.md) | Have a task folder to check | Whether it works through Harbor, with no model |
+| [running.md](references/running.md) | Are about to run models | The exact `swarmory job harbor` or `harbor run` command, and how to rerun or regrade |
 | [testing.md](references/testing.md) | Have run results to read | Whether a result is a measurement or a bug, and what to run next |
 | [difficulty.md](references/difficulty.md) | See the strongest model pass | How to make the task harder for the right reason |
 | [integrity.md](references/integrity.md) | Harden a task, or audit one for leaks and exploits | How a solver could cheat, and what stops it |
@@ -118,7 +123,8 @@ Design the verifier that tells the two apart. Write the instruction last.
    [ideation.md](references/ideation.md) to choose among ideas.
 2. **Build a rough version.** Copy [templates/task/](templates/task): one instance, a crude verifier, the simplest
    environment that could work ([environments.md](references/environments.md), [verifiers.md](references/verifiers.md)).
-3. **Prove it with no model.** Run `verify_task.py free` ([verifying.md](references/verifying.md)).
+3. **Prove it with no model.** Run `verify_task.py free` ([verifying.md](references/verifying.md)). In a swarmory run,
+   lint it, commit it, and run `swarmory job harbor` with `--agent oracle` and with `--agent nop` instead.
 4. **Run models.** A cheap model finds bugs. Then run two or three models of different strength
    ([running.md](references/running.md)), and open every transcript ([testing.md](references/testing.md)). Write each
    version's results in the idea card.
@@ -133,7 +139,8 @@ Design the verifier that tells the two apart. Write the instruction last.
 - Its stored cases score what they should, including 0 for the empty answer and 1 for the reference run through the
   solver's own tools ([verifiers.md](references/verifiers.md#store-cases-that-prove-the-verifier-right)).
 - No key, verifier or reference reaches the solver ([integrity.md](references/integrity.md)).
-- The free checks pass on Modal ([verifying.md](references/verifying.md)).
+- The free checks pass on Modal ([verifying.md](references/verifying.md)). In a swarmory run: the lint passes, the
+  oracle job scores 1 and the nop job scores 0.
 - An auditor who didn't build it wrote a blind answer in the task's output format, and it scored 1 through the
   verifier, or the disagreement was settled with evidence and the key or verifier fixed.
 - Every break someone found reproduces as a stored case that now scores what it should.

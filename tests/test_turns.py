@@ -2,6 +2,7 @@
 tool calls or at its next turn. Real runs prove the rest."""
 import json
 import threading
+import time
 
 import pytest
 from test_team import make
@@ -73,7 +74,8 @@ def test_the_next_turn_starts_at_once_unless_the_agent_waits_and_each_message_re
 
 
 class Turns:
-    """The worker's `swarmory wait`, `swarmory next` and `swarmory spend --json`, recording each wait and next."""
+    """The worker's `swarmory wait`, `swarmory next` and `swarmory spend --json`, recording each wait and next. The
+    server's clock runs an hour ahead of the worker's."""
 
     def __init__(self, spend, replies=None):
         self.spend, self.asked = spend, []
@@ -81,7 +83,7 @@ class Turns:
 
     def __call__(self, cmd, **popen):
         if cmd[:2] == ["swarmory", "spend"]:
-            return 0, json.dumps(self.spend)
+            return 0, json.dumps({"now": time.time() + 3600, **self.spend})
         assert cmd[:2] in (["swarmory", "wait"], ["swarmory", "next"]), cmd
         self.asked.append(cmd[1])
         if cmd[1] == "next" and len(self.replies) > 1:
@@ -95,12 +97,13 @@ def test_a_spent_budget_holds_the_agent_until_a_message_and_keeps_its_conversati
     for k in ("SWARMORY_URL", "SWARMORY_TOKEN", "SWARMORY_NAME", "SWARMORY_ID"):
         monkeypatch.setitem(agent.ENV, k, "x")
     a = object.__new__(agent.Agent)
+    a.conversations, a.resumable = None, tmp_path / "resumable"
     a.sessions = tmp_path / "sessions"
     a.run = Turns({"budget": 1, "by": {"ada": {"usd": 1.2}}}, [
         "Nothing new since your last turn.\nAbout 10 minutes left.\n",
         "Since your last turn:\nMessages for you:\n  vivek: budget raised\n",
     ])
-    a.clone, a.saver, a.started, a.count = lambda: None, lambda: None, lambda: False, lambda: 0
+    a.setup, a.saver, a.started, a.count = lambda: "", lambda: None, lambda: False, lambda: 0
     a.set_aside = lambda *_: pytest.fail("a spent budget threw away the conversation")
     prompts = []
 
@@ -108,19 +111,87 @@ def test_a_spent_budget_holds_the_agent_until_a_message_and_keeps_its_conversati
         prompts.append(prompt)
         if len(prompts) == 3:
             agent.DEADLINE = 0
-        return 1 if len(prompts) == 1 else 0  # the gateway refuses the first turn's calls
+        if len(prompts) == 1:  # the gateway refuses the first turn's calls
+            return 1
+        a.run.spend["answered_at"] = time.time() + 3600
+        return 0
 
     a.session = session
     a.live()
     assert a.run.asked == ["wait", "next", "wait", "next", "next"] and prompts[1].startswith("Since your last turn:")
 
 
+def test_a_provider_limit_pauses_the_agent_until_it_resets_and_keeps_its_conversation(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent, "DEADLINE", 2e9)
+    naps = []
+    monkeypatch.setattr(agent, "nap", naps.append)
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: None)
+    for k in ("SWARMORY_URL", "SWARMORY_TOKEN", "SWARMORY_NAME", "SWARMORY_ID"):
+        monkeypatch.setitem(agent.ENV, k, "x")
+    a = object.__new__(agent.Agent)
+    a.conversations, a.resumable = None, tmp_path / "resumable"
+    a.sessions = tmp_path / "sessions"
+    a.setup, a.saver, a.started = lambda: "", lambda: None, lambda: False
+    a.run = Turns({"budget": None, "by": {}, "limited_until": time.time() + 3600 + 600})
+    a.set_aside = lambda *_: pytest.fail("a provider limit threw away the conversation")
+    prompts = []
+
+    def session(prompt, fresh):
+        prompts.append(prompt)
+        if len(prompts) == 3:  # its limit expired while the session's end uploaded
+            a.run.spend = {"budget": None, "by": {}, "limited_at": time.time() + 3600,
+                           "limited_until": time.time() + 3600 - 1}
+        if len(prompts) == 4:
+            agent.DEADLINE = 0
+        if len(prompts) in (2, 3):  # the provider refuses the second and third sessions' calls
+            return 1
+        a.run.spend["answered_at"] = time.time() + 3600
+        return 0
+
+    a.session = session
+    a.live()
+    # the second pause in a row backs off past the expired limit
+    assert a.run.asked == ["next"] and 590 < naps[0] <= 600 and naps[1:] == [2 * agent.RETRY]
+    assert prompts[1].startswith("Since your last turn:") and all(p == "Your last session stopped at a provider limit, which has reset.\n\n" + prompts[1]
+               for p in prompts[2:])
+
+
+def test_a_session_that_exits_0_with_no_model_answer_failed(monkeypatch, tmp_path):
+    """pi exits 0 when the provider refuses every call. Such a session is retried a minute later, not taken as a
+    finished turn, and its conversation is set aside after the second."""
+    monkeypatch.setattr(agent, "DEADLINE", 2e9)
+    naps = []
+    monkeypatch.setattr(agent, "nap", naps.append)
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: None)
+    for k in ("SWARMORY_URL", "SWARMORY_TOKEN", "SWARMORY_NAME", "SWARMORY_ID"):
+        monkeypatch.setitem(agent.ENV, k, "x")
+    a = object.__new__(agent.Agent)
+    a.conversations, a.resumable = None, tmp_path / "resumable"
+    a.sessions = tmp_path / "sessions"
+    a.setup, a.saver, a.started = lambda: "", lambda: None, lambda: False
+    a.run = Turns({"budget": None, "by": {}, "answered_at": time.time() + 3600 - 600})  # before these sessions
+    asides, prompts = [], []
+    a.set_aside = lambda fails, why: asides.append(why) or "fresh"
+
+    def session(prompt, fresh):
+        prompts.append(prompt)
+        if len(prompts) == 3:
+            agent.DEADLINE = 0
+        return 0
+
+    a.session = session
+    a.live()
+    assert naps == [agent.RETRY, agent.RETRY] and a.run.asked == [] and asides == ["no model answer"]
+    assert prompts[1] == "Your last session got no answer from the model."
+
+
 def test_a_command_agent_resumes_only_after_a_session_that_succeeded(monkeypatch, tmp_path):
     for k, v in dict(SWARMORY_HARNESS="aider", SWARMORY_RUN="aider -m {prompt}", SWARMORY_SETUP="",
                      SWARMORY_RESUME="aider --restore-chat-history -m {prompt}", SWARMORY_DIR=str(tmp_path),
-                     SWARMORY_PROMPT="the mission", SWARMORY_URL="http://x", SWARMORY_TOKEN="t", SWARMORY_MODEL="",
+                     SWARMORY_URL="http://x", SWARMORY_TOKEN="t", SWARMORY_MODEL="",
                      SWARMORY_ARGS="").items():
         monkeypatch.setenv(k, v)
+    (tmp_path / "prompt.md").write_text("the mission\n")
     a = agent.Agent()
     a.sessions.mkdir()
     a.upload = lambda sync: None
@@ -132,7 +203,7 @@ def test_a_command_agent_resumes_only_after_a_session_that_succeeded(monkeypatch
 
     a.run = run
     for i in range(4):
-        a.session("carry on", a.set_aside(2, 1) if i == 3 else "")
+        a.session("carry on", a.set_aside(2, "exit 1") if i == 3 else "")
     assert [c[:2] for c in cmds] == [["aider", "-m"], ["aider", "-m"], ["aider", "--restore-chat-history"],
                                      ["aider", "-m"]]
     assert [c[-1].split("\n")[0] for c in cmds] == ["the mission", "the mission", "carry on", "the mission"]
@@ -147,7 +218,7 @@ def test_every_harness_with_a_hook_gets_messages_mid_turn_in_its_own_answer(tmp_
                  "anthropic/claude-haiku-5-5",
                  {"max_input_tokens": 200000, "max_output_tokens": 64000, "supports_reasoning": True})
     pi_model = json.loads((tmp_path / ".pi/agent/models.json").read_text())["providers"]["anthropic"]["models"][0]
-    assert pi_model == {"id": "claude-haiku-5-5", "contextWindow": 200000, "maxTokens": 64000, "reasoning": True}
+    assert pi_model == {"id": "claude-haiku-5-5", "contextWindow": 200000, "maxTokens": 64000}
     for f, event in ((".claude/settings.json", "PostToolUse"), (".codex/hooks.json", "PostToolUse"),
                      (".gemini/config/hooks.json", "PreInvocation")):
         hooks = json.loads((tmp_path / f).read_text())

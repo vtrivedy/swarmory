@@ -10,7 +10,8 @@ It reads from its environment:
                                    gateway
     SWARMORY_JOB                   the job's id
 
-The worker fetches the job's input from the server (a `git archive` of the tree the job recorded), runs Harbor
+The worker fetches the job's input from the server (a `git archive` of the tree the job recorded, and of its
+harness's, if its agent is one), runs Harbor
 on it with only the environment swarmory/harbor.py lists, which holds neither the job's token nor anything else
 of the worker's, sends what Harbor wrote as the job's artifacts, and finishes the job. Harbor runs in the worker's
 process group, so a backend that stops the worker stops Harbor with it. A cancel or the job's time limit ends Harbor.
@@ -76,11 +77,15 @@ def run(server: Server, job_id: str, spend: str, work: Path) -> dict:
     """Runs the job in `work`; what finish() sends the server, with the artifacts' folder as `out`."""
     job = server.api("job-show", {"id": job_id})["job"]
     task, out = work / "input" / (Path(job["path"]).name if job["path"] != "." else "repo"), work / "out"
-    task.mkdir(parents=True)
+    harness = job["harness"] and work / "harness"
     out.mkdir()
-    with tarfile.open(fileobj=io.BytesIO(server.request(f"/job/input?id={job_id}", timeout=600))) as tar:
-        tar.extractall(task, filter="data")  # no links out, no absolute paths, no devices
-    argv, env = harbor.command(job, task, out, server.url + "/llm", spend)
+    for part, folder in (("task", task), ("harness", harness)):
+        if folder:
+            folder.mkdir(parents=True)
+            got = server.request(f"/job/input?id={job_id}&part={part}", timeout=600)
+            with tarfile.open(fileobj=io.BytesIO(got)) as tar:
+                tar.extractall(folder, filter="data")  # no links out, no absolute paths, no devices
+    argv, env = harbor.command(job, task, out, server.url + "/llm", spend, harness)
     log, stop = out / "harbor.log", None
     end = job["until"] - min(REPORT, (job["until"] - time.time()) / 4)  # time to report in, of a short job too
     with open(log, "wb") as f:

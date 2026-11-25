@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Callable
 
-from swarmory import HOURS
+from swarmory import HOLD, HOURS
 
 from .jobs import described, git
 from .policy import TABLE, sha
@@ -342,7 +342,7 @@ def status(server, req: dict, token: str) -> dict:
 def stop(server, req: dict, token: str) -> dict:
     run = find(server, req)
     run.stop()
-    server.supervisor.tick()  # its workers are stopped before the answer
+    server.supervisor.tick(clone=False)  # its workers are stopped before the answer, which waits for no clone
     return {"run": run.id, "state": run.state()}
 
 
@@ -420,16 +420,20 @@ VERBS = {v.name: v for v in [
          f"starts on a message for it, or after {IDLE // 60} minutes. With timeout, holds this call that long for a "
          "message, and returns what changed if one came.",
          lambda run, who, req, gone: news(run.team.wait(who.member, req, gone, run.head), run, who), wait_text,
-         (Param("timeout", "number", "seconds to hold this call for a message, at most 300 (0)"),), WRITE),
+         (Param("timeout", "number", f"seconds to hold this call for a message, at most {HOLD} (0)"),), WRITE),
     Verb("next", "run", "team", "An agent's worker calls this between turns: it returns what changed since the last "
          "turn, at once, or once the agent stops waiting.",
          lambda run, who, req, gone: news(run.team.next(who.member, req, gone, run.head), run, who), news_text,
-         (Param("timeout", "number", "seconds to hold this call, at most 300 (300); call again to go on"),), WRITE),
+         (Param("timeout", "number", f"seconds to hold this call, at most {HOLD} ({HOLD}); call again to go on"),),
+         WRITE),
     Verb("inbox", "run", "team", "Messages addressed to you that no turn has shown yet, marked read: what a hook "
          "delivers between an agent's tool calls.", team("inbox"), inbox_text,
          (Param("limit", "integer", "at most this many, 1 to 10 (8)"),), WRITE),
-    Verb("spend", "run", "team", "What the run's model calls have cost, by member, and the run's budget.",
-         lambda run, who, req, gone: {"run": run.id, "budget": run.config.get("budget"), "by": run.proxy.totals()},
+    Verb("spend", "run", "team", "What the run's model calls have cost, by member, and the run's budget; for the "
+         "caller, when a model last answered its call (answered_at), and when a provider last limited a model that "
+         "hasn't answered since (limited_at) and until when (limited_until), with the server's clock (now).",
+         lambda run, who, req, gone: {"run": run.id, "budget": run.config.get("budget"), "by": run.proxy.totals(),
+                                      "now": time.time(), **run.proxy.limited(who.member)},
          spend_text),
 
     Verb("job", "run", "job.submit", "Has the run do a Harbor job on a committed folder, in a run started with "

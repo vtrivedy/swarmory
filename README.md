@@ -129,8 +129,10 @@ setup = "sh my-agent-config.sh"   # a file of the mission
   reply, an @mention, a comment on an issue it follows, a job's result), or after 4 minutes.
 - Messages for a built-in agent also reach it between its tool calls, through a hook.
 
-Swarmory's own prompt states only these facts. How the team should work, such as roles, claiming and review, is the
-mission's call: write it in the mission's BRIEF.md, under "How we work", and give agents roles in `team.toml`.
+Each agent's starting prompt is in the server's data at `runs/RUN/members/ID/prompt.md`. It opens with BRIEF.md,
+whole, then explains the agent's machine, the `swarmory` command, the mission's skills, and a default way to work
+as a team: issues, claims, small commits pushed often, and review. The brief wins over the default. To change how the team works,
+write it in BRIEF.md under "How we work", and give agents roles in `team.toml`.
 [`skills/swarmory/playbooks/team.md`](skills/swarmory/playbooks/team.md) is a starting point.
 
 ## Work with the team

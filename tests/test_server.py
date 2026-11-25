@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -22,6 +23,9 @@ from conftest import OPENER, code, post, soon
 from swarmory import cli
 from swarmory.control_plane import verbs
 from swarmory.control_plane.policy import sha
+from swarmory.control_plane.prompt import mission as read_mission
+from swarmory.control_plane.prompt import prompt
+from swarmory.control_plane.supervisor import prepare
 
 FAKE_LITELLM = Path(__file__).with_name("fake_litellm.py")
 TASK = '[task]\nname = "t/hello"\n\n[environment]\nnetwork_mode = "no-network"\n'  # sealed, as a job needs it
@@ -98,6 +102,65 @@ def test_an_export_holds_the_runs_records_and_no_token_or_digest(serve, tmp_path
     for name in ("sessions/session-001.jsonl", "agent.log"):
         assert b"[hidden]" in files[f"{run.id}/members/ada/{name}"]
     assert post(run.url, tokens["ada"], "me")["me"]["id"] == "ada" and code(f"{run.url}/export", tokens["ada"]) == 403
+
+
+def test_an_agents_clone_is_made_before_its_worker_starts_and_only_once(serve, tmp_path):
+    """The server clones the run's repo into members/ID/work, with origin control-plane:work.git, writes the starting
+    prompt beside it, before the worker starts. A restart finds the clone and clones nothing; a clone cut short leaves
+    work.tmp, which the next removes, and a work folder with no .git is replaced."""
+    served = serve()
+    data, backend = Path(served.server.data), served.backend
+    seen, start = [], backend.start
+    backend.start = lambda spec: (seen.append(((data / spec.home / "work" / ".git").is_dir(),
+                                               (data / spec.home / "prompt.md").is_file())),
+                                  start(spec))
+    run = served.start()
+    run.workers("ada")
+    work = data / "runs" / run.id / "members" / "ada" / "work"
+    assert seen == [(True, True)], "the worker started before its clone and prompt were made"
+    origin = subprocess.run(["git", "-C", str(work), "remote", "get-url", "origin"], capture_output=True, text=True)
+    assert origin.stdout.strip() == "control-plane:work.git"
+    assert (work / "BRIEF.md").is_file()
+
+    (work / "mine").write_text("an agent's work")
+    backend.up.clear()  # its worker is gone
+    served.server.supervisor.clone()
+    assert (work / "mine").is_file(), "a restart cloned again"
+
+    shutil.rmtree(work / ".git")  # a work folder that is no clone
+    (work.with_name("work.tmp") / "half").mkdir(parents=True)
+    prepare(Path(served.server.runs.get(run.id).repo), work)
+    assert not (work / "mine").exists() and (work / "BRIEF.md").is_file() and not work.with_name("work.tmp").exists()
+
+
+def test_the_starting_prompt_holds_the_brief_the_skills_and_the_agents_machine(serve, tmp_path):
+    """The prompt has BRIEF.md whole, each skill on main with its description (one over several lines too), and says
+    what the agent's machine reaches and whether the run has Harbor jobs, and where their trials run."""
+    folder = mission(tmp_path)
+    (folder / "BRIEF.md").write_text("# Say hello\n\nCost: $5 at most. ${role} is not a variable.\n")
+    for name, front in (("greeter", "description: Greets people. Use when\n  someone arrives.\n"),
+                        ("quoted", 'name: quoted-skill\ndescription: "Says: hi"\n')):
+        (folder / ".agents" / "skills" / name).mkdir(parents=True)
+        (folder / ".agents" / "skills" / name / "SKILL.md").write_text(f"---\n{front}---\n\n# {name}\n")
+    (folder / ".agents" / "skills" / "notes.md").write_text("not a skill\n")
+    served = serve()
+    run = served.start(team=[{"harness": "claude-code", "role": "Greet people."}], mission=folder, jobs=True)
+    run.workers("ada")
+    text = (Path(served.server.data) / "runs" / run.id / "members" / "ada" / "prompt.md").read_text()
+    assert "<brief>\n# Say hello\n\nCost: $5 at most. ${role} is not a variable.\n</brief>" in text
+    assert ("- greeter (.agents/skills/greeter/SKILL.md): Greets people. Use when someone arrives.\n"
+            "- quoted-skill (.agents/skills/quoted/SKILL.md): Says: hi\n") in text
+    assert "Your role: Greet people." in text and "The network is open." in text
+    assert "in Docker on the server's machine" in text and "$" not in text.replace("$5", "").replace("${role}", "")
+
+    r = served.server.runs.get(run.id)
+    brief, skills = read_mission(r.repo)
+    member = r.team.members["ada"]
+    modal = prompt({**r.config, "jobs": False}, member, brief, [], "modal", ("x.modal.run", "pypi.org"), "")
+    assert "It reaches only these hosts: x.modal.run, pypi.org." in modal and "The network is open." not in modal
+    assert "has no jobs" in modal and "swarmory job harbor" not in modal and "mission's skills" not in modal
+    r.jobs.url = "https://x.modal.run"  # a deployed server: trials run on Modal
+    assert "on Modal" in prompt(r.config, member, brief, skills, "modal", (), r.jobs.guide())
 
 
 def test_a_dry_start_checks_the_run_and_starts_nothing(serve, monkeypatch):

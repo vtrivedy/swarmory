@@ -27,7 +27,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from swarmory import HOURS, PORT, POST_BUFFER, TRACE_MOST, harness
+from swarmory import HOLD, HOURS, PORT, POST_BUFFER, TRACE_MOST, harness
+from swarmory.harbor import AGENTS
 
 USAGE = f"""\
 swarmory                                 who you are, what's unread, your issues, the run
@@ -50,12 +51,13 @@ swarmory move ID todo|doing|done|canceled [NOTE...]
 swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal]
              [--hours H] [--budget USD] [--to WHERE]
                                          have the run do a Harbor job on the folder PATH as your HEAD commit has it: a
-                                         task, or a folder of tasks. A is oracle, nop, claude-code or codex; the last
-                                         two need --model and the first two take none. --attempts runs each task N times
+                                         task, or a folder of tasks. A is oracle, nop, claude-code or codex, or a
+                                         folder with an executable `run` (a custom harness); all but oracle and nop
+                                         need --model, which those two don't take. --attempts runs each task N times
                                          (by default 1). --env is where trials run: docker, on the server's machine (a
-                                         local server's default), or modal (any other server's). PATH must have no
-                                         uncommitted changes: `swarmory job` pushes HEAD and sends the commit, so the
-                                         result names exactly what ran. The result comes as a message in WHERE (default
+                                         local server's default), or modal (any other server's). PATH, and A if it is a
+                                         folder, must have no uncommitted changes: `swarmory job` pushes HEAD and sends
+                                         the commit, so the result names exactly what ran. The result comes as a message in WHERE (default
                                          general), with the job's artifacts attached. --hours is the longest the job may
                                          take ({HOURS}, and never past the run's end); --budget stops its model calls
                                          once they cost USD
@@ -64,7 +66,7 @@ swarmory results PATH                    every job in this run on exactly this f
 swarmory spend                           what the run's model calls have cost, by member, and the run's budget
 swarmory wait [--timeout S]              say you have nothing to do until someone writes: an agent's next turn
                                          starts on a message, or after 4 minutes. --timeout holds up to S seconds
-                                         (at most 300) for a message: exit 4 if none came
+                                         (at most {HOLD}) for a message: exit 4 if none came
 swarmory login URL [TOKEN]               save the run's (or server's) address and your token; `swarmory login` prints it
 Every command but serve, deploy and mcp takes --json, which prints its answer's data. Put -- before text that starts
 with --.
@@ -346,15 +348,27 @@ def job(pos, opts):
         # cancel is tried once: it has no nonce, so a second try of one that landed is refused as already canceled
         r = call("job-show" if sub == "show" else "cancel", {"id": arg}, retry=sub == "show")
     elif sub == "harbor" and arg:
-        path, tree = committed(arg)
-        if not tree:
-            fail("%s has uncommitted changes. Commit them first: a job runs on a commit, so its result names exactly "
-                 "what it ran on." % arg)
+        def sent(folder):  # a folder's path in the repo, which must be committed
+            inside, tree = committed(folder)
+            if not tree:
+                fail("%s has uncommitted changes. Commit them first: a job runs on a commit, so its result names "
+                     "exactly what it ran on." % folder)
+            return inside
+
+        path, params, root = sent(arg), dict(opts.get("params", {})), git(arg, "rev-parse", "--show-toplevel")
+        agent = params.get("agent")
+        # a harness folder: its path from here, or from the repo's root
+        for folder in (agent, os.path.join(root.strip(), agent)) if agent and agent not in AGENTS else ():
+            if os.path.isdir(folder):
+                if git(folder, "rev-parse", "--show-toplevel") != root:
+                    fail("--agent %s is not a folder of the repo that has %s" % (agent, arg))
+                params["agent"] = sent(folder)
+                break
         commit, (url, token) = git(arg, "rev-parse", "HEAD").strip(), load_login()
         git(arg, "push", "-q", url + "/git/work.git", "HEAD:refs/submit/" + commit, token=token)
         budget = number(opts["--budget"], "--budget") if opts.get("--budget") else None
         hours = {"hours": number(opts["--hours"], "--hours")} if opts.get("--hours") else {}  # else HOURS
-        r = call("job", {"commit": commit, "path": path, "params": opts.get("params", {}), **hours, "budget": budget,
+        r = call("job", {"commit": commit, "path": path, "params": params, **hours, "budget": budget,
                          "to": opts.get("--to")})
     else:
         usage("job takes harbor PATH, list, show ID or cancel ID")
@@ -435,11 +449,11 @@ def unheard(text, paths, conv):
 
 
 def next_turn():
-    """agent.py's: holds until the agent's next turn starts, in calls of at most 300 s, and returns what changed.
+    """agent.py's: holds until the agent's next turn starts, in calls of at most HOLD seconds, and returns what changed.
     While the server does not answer, it asks again every 5 s: the worker's deadline ends the wait."""
     while True:
         try:
-            r = post("next", {"timeout": 300}, 330)
+            r = post("next", {"timeout": HOLD}, HOLD + 30)
             if r["data"]["done"]:
                 return r
         except ConnectionError:
@@ -491,14 +505,27 @@ def login(pos):
 
 
 def save_login(url, token, run=None):
-    """Saves the login, and the git config that has `control-plane:work.git` reach its run's repo with the token; no
-    credential helper (macOS's) keeps the token."""
+    """Saves the login, and the git config that has `control-plane:work.git` reach its run's repo. git gets the token
+    from `swarmory git-credential` alone, so no remote URL or config holds it, and no other credential helper (macOS's)
+    keeps it."""
     save_private(LOGIN, json.dumps({"url": url, "token": token, **({"run": run} if run else {})}) + "\n")
     u = urllib.parse.urlsplit(run_url(url, run))
-    remote = "%s://swarmory:%s@%s%s/git/" % (u.scheme, token, u.netloc, u.path)
     save_private(os.path.join(os.path.dirname(LOGIN), "gitconfig"),
-                 '[url "%s"]\n\tinsteadOf = control-plane:\n[credential "%s://%s"]\n\thelper =\n'
-                 % (remote, u.scheme, u.netloc))
+                 '[url "%s/git/"]\n\tinsteadOf = control-plane:\n'
+                 '[credential "%s://%s"]\n\thelper =\n\thelper = !swarmory git-credential\n'
+                 % (u.geturl(), u.scheme, u.netloc))
+
+
+def git_credential(op):
+    """git's credential helper protocol: for `get`, the login's token if git asks for the login's server, else
+    nothing. It reads the login each time, as an agent's restart gives it a new token."""
+    if op != "get":  # store and erase: the login is the only store
+        return
+    asked = dict(line.partition("=")[::2] for line in sys.stdin.read().splitlines())
+    d = saved()
+    u = urllib.parse.urlsplit(d.get("url", ""))
+    if d and (asked.get("protocol"), asked.get("host")) == (u.scheme, u.netloc):
+        print("username=swarmory\npassword=" + d["token"])
 
 
 # ---- the operator's commands
@@ -728,7 +755,8 @@ def mcp():
             if paths:
                 args["files"] = [upload(path, at, token) for path in paths]
             nonce = {"nonce": secrets.token_hex(8)} if name in NONCE else {}
-            data = fetch(at, "/api/" + name, token, {**args, **nonce}, 310 if name in ("wait", "next") else 60)["data"]
+            held = name in ("wait", "next")
+            data = fetch(at, "/api/" + name, token, {**args, **nonce}, HOLD + 30 if held else 60)["data"]
             said = paths and unheard(args.get("text"), paths, data["message"]["conv"])
             return {**data, "warning": said} if said else data
         except (Refused, ConnectionError) as e:  # the model reads why, and can act on it
@@ -766,6 +794,8 @@ def command(argv):
     flags = argv[:argv.index("--")] if "--" in argv else argv
     if argv[:1] == ["help"] or "-h" in flags or "--help" in flags:
         return print(USAGE)
+    if argv[:1] == ["git-credential"]:  # git's, from save_login's gitconfig
+        return git_credential(argv[1] if len(argv) == 2 else None)
     if argv[:1] in (["deploy"], ["mcp"]):
         if argv[1:]:
             usage("`swarmory %s` takes no arguments" % argv[0])
@@ -790,7 +820,7 @@ def command(argv):
         r = next_turn()
     elif cmd == "wait":
         seconds = number(opts.get("--timeout", "0"), "--timeout")
-        r = post("wait", {"timeout": seconds}, seconds + 30)
+        r = post("wait", {"timeout": seconds}, min(seconds, HOLD) + 30)
         code = 4 if seconds and not r["data"]["done"] else 0
     elif cmd == "get":
         r = get(pos)

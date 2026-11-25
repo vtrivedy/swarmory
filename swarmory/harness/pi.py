@@ -52,7 +52,9 @@ class Pi:
             spec["contextWindow"] = int(ctx)
         if out := meta.get("max_output_tokens") or meta.get("max_tokens"):
             spec["maxTokens"] = int(out)
-        if "supports_reasoning" in meta:
+        # pi 0.73.1 asks a Claude model it doesn't know for budget thinking, which current Claude models refuse with
+        # a 400: with reasoning unset it asks for none
+        if "supports_reasoning" in meta and provider != "anthropic":
             spec["reasoning"] = bool(meta["supports_reasoning"])
         agent = Path.home() / self.home / "agent"
         (agent / "extensions").mkdir(parents=True, exist_ok=True)
@@ -65,7 +67,8 @@ class Pi:
         return {"text": text}
 
     def command(self, prompt: str, resume: bool, model: str | None, args: list) -> list:
-        return [self.cli, "--print", "--mode", "json", *(["--continue"] if resume else []),
+        return [self.cli, "--print", "--mode", "json", "--no-context-files",  # no AGENTS.md or CLAUDE.md
+                *(["--continue"] if resume else []),
                 *(["--model", model] if model else []), *args, prompt]
 
     def signin(self, login: str) -> Login | None:

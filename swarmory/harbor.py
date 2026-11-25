@@ -2,12 +2,16 @@
 a folder of them, in Docker containers on the server's machine or in Modal sandboxes, and reports each trial's
 reward. A local server's trials run in Docker by default, where they can reach it, and any other server's on Modal.
 
-Nothing in the task folder chooses the agent, the network or a credential. The parameters choose the agent. A job is
+Nothing in the task folder chooses the agent, the network or a credential. The parameters choose the agent: one of
+Harbor's built in, or a harness, a committed folder with an executable `run`, which one fixed adapter
+(worker/harbor_adapter/committed.py) runs inside each trial's sandbox, never in Harbor's own process. A job is
 refused, when it is asked for, unless each task.toml is sealed: the environment and the verifier have no network, so
 a model agent's trials reach only the server's model gateway, which the Harbor command adds. A `${...}` value
-in an env table is refused too, because Harbor fills those from the environment of the process that runs it. The job
-worker (swarmory/worker/job.py) runs Harbor with a listed environment: PATH, HOME, the Modal token Harbor starts
-sandboxes with, and the job's spend token."""
+in an env table is refused too, because Harbor fills those from the environment of the process that runs it, and so is
+a docker-compose.yaml anywhere in the folder (Harbor reads one from a verifier's tests/ too), which Docker fills the
+same way and which could unseal it. The job worker (swarmory/worker/job.py) runs Harbor with a listed environment:
+PATH, HOME, the Modal token Harbor starts sandboxes with, the job's spend token, and for a harness the adapter's folder
+as PYTHONPATH."""
 import copy
 import json
 import os
@@ -21,6 +25,8 @@ VERSION = "harbor[modal]==0.23.0"
 GATEWAY = {"claude-code": ("/anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),  # each coding agent's route
            "codex": ("/openai/v1", "OPENAI_BASE_URL", "OPENAI_API_KEY")}             # and the settings it reads
 AGENTS = ("oracle", "nop", *GATEWAY)  # Harbor's model-free agents, and the coding agents
+ADAPTER = Path(__file__).parent / "worker" / "harbor_adapter"  # Harbor's PYTHONPATH for a harness: this folder alone
+COMPOSE = "docker-compose.yaml"
 CONCURRENT = 8  # the most trials one job runs at once
 RETRY = "EnvironmentStartTimeoutError"  # a trial whose sandbox did not start is run once more
 APP = "__harbor__"  # the Modal app Harbor starts trial and verifier sandboxes in
@@ -71,7 +77,9 @@ def seal(doc: dict, name: str = "task.toml") -> dict:
         for key in ("allowed_hosts", "allow_internet"):
             table.pop(key, None)
 
-    shut(doc.setdefault("environment", {}))
+    if not isinstance(doc.setdefault("environment", {}), dict):
+        raise ValueError(f"{name}: environment is not a table")
+    shut(doc["environment"])
     for holder in (doc, *(s for s in doc.get("steps", ()) if isinstance(s, dict))):
         for phase in (holder.get("agent"), holder.get("verifier")):
             if isinstance(phase, dict):
@@ -98,30 +106,41 @@ def trials(folder: Path) -> list:
     return out
 
 
-def check(params: dict, inputs, url: str) -> dict:
+def check(params: dict, inputs, url: str, harness=None) -> dict:
     """On the server, before the job is queued: the parameters as the job records them, or a ValueError that
-    says what is wrong with them or with the folder. `url` is the server's address."""
+    says what is wrong with them or with the folder. `url` is the server's address. `harness` is the committed
+    folder the agent names, when it names one rather than a built-in agent."""
     extra = params.keys() - {"agent", "model", "attempts", "env"}
     if extra:
         raise ValueError(f"a harbor job takes --agent, --model, --attempts and --env, not {', '.join(sorted(extra))}")
     if params.get("env") not in (None, *ENVS):
         raise ValueError("env is docker, to run trials on the server's machine, or modal")
     agent, model, attempts = params.get("agent"), params.get("model"), params.get("attempts", 1)
-    if agent not in AGENTS:
-        raise ValueError(f"agent is one of {', '.join(AGENTS)}")
-    if (model is None) == (agent in GATEWAY) or model is not None and not (
+    if agent not in AGENTS and harness is None:
+        raise ValueError(f"agent is one of {', '.join(AGENTS)}, or a committed folder in the repo (not the repo "
+                         "itself) that holds an executable `run`")
+    if harness is not None and "run" not in harness.names():
+        raise ValueError(f"the agent folder {agent} has no `run`: the executable each trial runs")
+    modeled = agent in GATEWAY or harness is not None
+    if (model is None) == modeled or model is not None and not (
             isinstance(model, str) and len(model) <= 100 and re.fullmatch(r"[\w.:/@-]+", model)):
-        raise ValueError("model is a model name, which claude-code and codex need and oracle and nop do not take")
+        raise ValueError("model is a model name, which claude-code, codex and a harness folder need and oracle and "
+                         "nop do not take")
     if isinstance(attempts, str) and attempts.isdigit():
         attempts = int(attempts)
     if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
         raise ValueError("attempts is a whole number from 1")
     # with no env, a local server's trials run in Docker, so only trials sent to Modal cannot reach it
-    if agent in GATEWAY and params.get("env") == "modal" and urllib.parse.urlsplit(url).hostname in LOOPBACK:
+    if modeled and params.get("env") == "modal" and urllib.parse.urlsplit(url).hostname in LOOPBACK:
         raise ValueError(LOCAL)
-    tasks = task_files(inputs.names())
+    names = inputs.names()
+    tasks = task_files(names)
     if not tasks:
         raise ValueError("the folder is not a Harbor task or a folder of them: it has no task.toml")
+    if compose := next((n for n in names if n == COMPOSE or n.endswith("/" + COMPOSE)), None):
+        raise ValueError(f"{compose}: a job's task runs as one container, which its Dockerfile builds. Docker fills a "
+                         "compose file's ${...} from the job worker's environment, and a compose service can leave "
+                         "the sealed network. Put what the task needs, such as an MCP server, in its Dockerfile.")
     for name in tasks:
         try:
             doc = tomllib.loads(inputs.read(name).decode())
@@ -153,17 +172,18 @@ def sweep(tag: str):
             sb.terminate()
 
 
-def command(job: dict, task: Path, out: Path, llm: str, key: str) -> tuple[list, dict]:
+def command(job: dict, task: Path, out: Path, llm: str, key: str, harness: Path = None) -> tuple[list, dict]:
     """The Harbor command for a claimed job, built only from its checked parameters, and the whole environment Harbor
-    runs with. `llm` is the server's model gateway and `key` the job's spend token. Trials of a coding agent reach
-    only that gateway."""
+    runs with. `llm` is the server's model gateway and `key` the job's spend token; `harness` is the job's agent
+    folder, if it has one. Trials of a coding agent or a harness reach only that gateway: a harness gets both its
+    routes."""
     params, to = job["params"], urllib.parse.urlsplit(llm)
     on, trials = where(params, llm), min(params["attempts"] * params["tasks"], CONCURRENT)
     if on == "docker" and to.hostname in LOOPBACK:  # a container's own 127.0.0.1 is itself, not this machine
         to = to._replace(netloc=FROM_DOCKER + (f":{to.port}" if to.port else ""))
     argv = [*shlex.split(os.environ.get("HARBOR") or ""), "run", "-p", str(task), "--env", on, "-a",
-            params["agent"], "-k", str(params["attempts"]), "-n", str(trials), "-o", str(out),
-            "--job-name", job["id"], "--max-retries", "1", "--retry-include", RETRY, "-y"]
+            "committed:Committed" if harness else params["agent"], "-k", str(params["attempts"]), "-n", str(trials),
+            "-o", str(out), "--job-name", job["id"], "--max-retries", "1", "--retry-include", RETRY, "-y"]
     if not os.environ.get("HARBOR"):  # the job image sets HARBOR to the Harbor it has installed
         argv[:0] = ["uvx", "--from", VERSION, "harbor"]
     if params["model"]:
@@ -171,10 +191,14 @@ def command(job: dict, task: Path, out: Path, llm: str, key: str) -> tuple[list,
     if on == "modal":
         argv += ["--ek", "labels=" + json.dumps({TAG: job["tag"]})]
     env = {**{k: os.environ[k] for k in ("PATH", "HOME", *MODAL) if k in os.environ}, "SWARMORY_JOB_KEY": ""}
-    if params["agent"] in GATEWAY:
-        route, base, name = GATEWAY[params["agent"]]
-        argv += ["--ae", f"{base}={to.geturl()}{route}", "--ae", f"{name}=${{SWARMORY_JOB_KEY}}",
-                 "--allow-environment-host", to.hostname]
+    if harness:
+        argv += ["--ak", f"dir={harness}"]
+        env["PYTHONPATH"] = str(ADAPTER)
+    routes = GATEWAY.values() if harness else [GATEWAY[params["agent"]]] if params["agent"] in GATEWAY else []
+    for route, base, name in routes:
+        argv += ["--ae", f"{base}={to.geturl()}{route}", "--ae", f"{name}=${{SWARMORY_JOB_KEY}}"]
+    if routes:
+        argv += ["--allow-environment-host", to.hostname]
         env["SWARMORY_JOB_KEY"] = key
     return argv, env
 

@@ -10,9 +10,9 @@ from typing import Protocol
 class WorkerSpec:
     name: str              # "RUN/agent/ID" or "RUN/job/JID"
     env: dict              # SWARMORY_URL, one token and the worker's settings. Never a provider key.
-    grants: tuple = ()     # an agent's --grant names: on the local backend variables of the server's environment, on
-                           # Modal the Modal secrets of those names. A job's worker has none: each backend gives it
-                           # Harbor's Modal token itself
+    grants: tuple = ()     # an agent's --grant names, or a job's (jobs.SECRETS): on the local backend variables of the
+                           # server's environment, on Modal the Modal secrets of an agent's names (a job's worker gets
+                           # the Modal secret JOB_SECRET)
     allow_hosts: tuple = ()  # the hosts it may reach: the server's, plus the run's --allow
     home: str = ""         # its folder in the server's data, which survives a restart: an agent's runs/RUN/members/ID,
                            # a job's runs/RUN/jobs/JID
@@ -24,6 +24,8 @@ class WorkerSpec:
 
 
 class Backend(Protocol):
+    kind: str  # "local" or "modal": where its workers run, which an agent's starting prompt describes
+
     def start(self, spec: WorkerSpec) -> None:
         """Starts the worker, unless one of that name is live."""
 

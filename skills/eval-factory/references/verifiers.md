@@ -214,8 +214,9 @@ allowed_hosts = ["<decision endpoint host>"]
 ```
 
 Harbor fills `${...}` from the environment of the machine that launches the run, so the API key never sits in a file.
-A swarmory job refuses a task written this way and gives its verifier no network ([running.md](running.md)), so run
-such a task with Harbor yourself.
+This task can't run as a swarmory job. A job runs only a sealed task, with no network for the verifier and no
+`${...}` value ([running.md](running.md)). Run it with Harbor yourself, outside a swarmory run. In a swarmory run,
+use a code verifier.
 
 ## Rubric judges for open-ended outputs
 

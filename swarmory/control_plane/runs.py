@@ -54,6 +54,14 @@ COMMITS_MOST, PATCH_MOST = 500, 512 << 10
 FORMAT = "%H%x1f%ce%x1f%an%x1f%ct%x1f%s%x1f"  # then the body, or in a log the files
 SESSIONS = {}  # session file -> (its size, its events), the CACHED most recently read: a file is read once per size
 CACHED = 64
+PRE_RECEIVE = """#!/bin/sh
+while read -r old new ref; do
+  case "$ref" in
+    refs/heads/main|refs/submit/*) ;;
+    *) echo "Push to main only: this server refuses $ref. Rebase your commits onto main and push main."; exit 1 ;;
+  esac
+done
+"""
 READS = threading.Lock()  # around SESSIONS, which viewers' requests share
 
 
@@ -434,4 +442,7 @@ class Runs:
         for key, value in (("http.receivepack", "true"), ("receive.denyNonFastForwards", "true"),
                            ("receive.denyDeletes", "true"), ("receive.hideRefs", "refs/jobs")):
             subprocess.run(["git", "-C", repo, "config", key, value], check=True)
+        hook = folder / "work.git" / "hooks" / "pre-receive"  # work pushed to any other branch is work nobody sees
+        hook.write_text(PRE_RECEIVE)
+        hook.chmod(0o755)
         return self.get(config["run"])

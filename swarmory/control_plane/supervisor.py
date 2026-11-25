@@ -2,13 +2,15 @@
 
 Each tick reads what should run (Run.wanted: each agent of a running run that has a main, and a worker for each job it
 holds or may claim) and what runs (the backend's `live`), and plan() says what to do: start, stop, or fail a job whose
-worker is gone, which also ends the sandboxes its Harbor left. plan() is pure; tick() carries its steps out. Starting
-an agent mints its token, so a restarted worker holds a new one and the old one stops working; starting a job's worker
-claims the job, which mints its tokens."""
+worker is gone, which also ends the sandboxes its Harbor left. plan() is pure; tick() carries its steps out. An agent's
+worker starts only once its clone, members/ID/work, exists: the server makes it from the run's repo. Before each start
+the server writes the agent's starting prompt, rendered from main, to members/ID/prompt.md. Starting an agent mints its
+token, so a restarted worker holds a new one and the old one stops working; starting a job's worker claims the job,
+which mints its tokens."""
 import json
 import os
 import secrets
-import string
+import shutil
 import threading
 import time
 import traceback
@@ -16,16 +18,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from swarmory import harbor, harness
+from swarmory import harness
 from swarmory.backends.base import WorkerSpec
 
+from .jobs import SECRETS, git
 from .policy import sha
-from .team import IDLE, SYSTEM
+from .prompt import mission, prompt
+from .team import SYSTEM
 
 TICK = 5  # seconds between ticks
 RESTART = 60  # an agent's worker starts at most once a minute
 GONE = 60  # seconds a job's worker may be missing from `live` after it started, before its job fails
-PROMPT = Path(__file__).resolve().parents[1] / "worker" / "prompt.md"
 
 
 @dataclass(frozen=True)
@@ -59,19 +62,19 @@ def plan(wanted: list, live: frozenset, now: float, restart: float = RESTART) ->
     return steps
 
 
-def prompt(config: dict, member: dict) -> str:
-    """One agent's starting prompt (worker/prompt.md). $work, where its clone is, is left for the worker to fill in."""
-    agents = [m for m in config["members"] if m["kind"] == "agent"]
-    roster = [f"- {a['name']} ({a['id']}), {a['harness']}" + (f". Role: {a['role']}" if a.get("role") else "")
-              for a in agents]
-    roster.append(f"- {config['operator'].title()} ({config['operator']}), a person, runs this mission")
-    return string.Template(PROMPT.read_text()).safe_substitute(
-        name=member["name"], id=member["id"], n=len(agents), roster="\n".join(roster),
-        role=f"Your role: {member['role']}\n\n" if member.get("role") else "",
-        idle=f"{IDLE // 60}",
-        hooks=" Messages for you also arrive between your tool calls, marked [swarmory]."
-        if harness.of(member).hooks else "",
-        deadline=time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(config["deadline"])))
+def prepare(repo: Path, work: Path):
+    """Makes the agent's clone `work` of the run's repo, with origin control-plane:work.git (its login's gitconfig
+    points that at the server), unless it has one. A local clone: no network, and a clone cut short leaves only
+    work.tmp, which the next try removes. A work folder with no .git is no clone, and the new one replaces it."""
+    if (work / ".git").is_dir():
+        return
+    tmp = work.with_name("work.tmp")
+    work.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+    git(repo, "clone", "--no-hardlinks", "-q", str(repo), str(tmp))
+    git(tmp, "remote", "set-url", "origin", "control-plane:work.git")
+    shutil.rmtree(work, ignore_errors=True)
+    tmp.rename(work)
 
 
 class Supervisor:
@@ -80,6 +83,7 @@ class Supervisor:
         self.every, self.restart = tick, restart
         self.host = urlsplit(url).hostname
         self.lock = threading.Lock()  # one tick at a time: the loop's, or a verb's that asked for one now
+        self.ticks = 0  # ticks done, so a tick knows whether another ran since it read what runs
         self.done = threading.Event()
 
     def loop(self):
@@ -89,18 +93,57 @@ class Supervisor:
             except Exception:  # a backend that did not answer this once: the next tick asks again
                 traceback.print_exc()
 
-    def tick(self):
+    def tick(self, clone: bool = True):
+        """One pass. Clones are made first, outside the lock, as a large repo takes a while: the stop verb, which ticks
+        with clone=False, waits for no clone, so the loop's thread is the only one that makes them. What runs is read
+        outside the lock too, as the backend may be slow to answer, and read again if another tick ran meanwhile: a
+        plan on what ran before would start a running agent again, which revokes its token."""
         if self.done.is_set():
             return
-        live = self.backend.live()
-        with self.lock:
-            if self.done.is_set():  # the server is closing: nothing starts after close() returns
-                return
-            now = time.time()
-            for step in plan([w for run in self.runs.loaded() for w in run.wanted(now)], live, now, self.restart):
+        if clone:
+            self.clone()
+        while True:
+            ran, live = self.ticks, self.backend.live()
+            with self.lock:
+                if self.done.is_set():  # the server is closing: nothing starts after close() returns
+                    return
+                if self.ticks != ran:
+                    continue
                 try:
-                    self.do(step)
-                except Exception:  # one worker's trouble never stops the rest
+                    now = time.time()
+                    for step in plan([w for run in self.runs.loaded() for w in run.wanted(now)], live, now,
+                                     self.restart):
+                        try:
+                            self.do(step)
+                        except Exception:  # one worker's trouble never stops the rest
+                            traceback.print_exc()
+                finally:  # counted once its steps are done, so a tick that read `live` during them reads it again
+                    self.ticks += 1
+                return
+
+    def home(self, run, wid: str) -> str:
+        """An agent's folder in the server's data (WorkerSpec.home)."""
+        return f"runs/{run.id}/members/{wid}"
+
+    def work(self, run, wid: str) -> Path:
+        """An agent's clone."""
+        return self.runs.dir.parent / self.home(run, wid) / "work"
+
+    def hosts(self, run) -> tuple:
+        """The hosts an agent of `run` reaches on Modal: the server's, and the run's --allow."""
+        return (self.host, *run.config.get("allow", ()))
+
+    def clone(self):
+        """Makes the clone of each agent that should run and has none."""
+        now = time.time()
+        for run in self.runs.loaded():
+            for w in run.wanted(now):
+                _, role, wid = w.name.split("/")
+                if not w.run or role != "agent":
+                    continue
+                try:
+                    prepare(run.repo, self.work(run, wid))
+                except Exception:  # its worker waits for a clone, which the next tick tries again
                     traceback.print_exc()
 
     def do(self, step: Step):
@@ -110,10 +153,14 @@ class Supervisor:
         run = self.runs.get(rid)
         if step.do == "fail":
             run.jobs.finish(SYSTEM, {"id": wid, "status": "failed", "error": "Its worker stopped without reporting."})
-            job = run.jobs.view(wid)
-            if harbor.where(job["params"], self.url) == "modal":
-                harbor.sweep(job["tag"])  # its Harbor died with it, and left its sandboxes running
+            run.jobs.cleanup(run.jobs.view(wid))
         elif role == "agent":
+            work = self.work(run, wid)
+            if not (work / ".git").is_dir():  # a start would find no clone
+                return
+            brief, skills = mission(run.repo)
+            (work.parent / "prompt.md").write_text(prompt(run.config, run.team.members[wid], brief, skills,
+                                                          self.backend.kind, self.hosts(run), run.jobs.guide()))
             token = secrets.token_hex(16)
             run.team.worker(wid, sha(token))  # logged before the worker gets it
             self.backend.start(self.agent(run, run.team.members[wid], token))
@@ -134,10 +181,10 @@ class Supervisor:
             {"SWARMORY_URL": f"{self.url}/r/{run.id}", "SWARMORY_TOKEN": token, "SWARMORY_ID": member["id"],
              "SWARMORY_NAME": member["name"], "SWARMORY_HARNESS": member["harness"],
              "SWARMORY_MODEL": member.get("model") or "", "SWARMORY_DEADLINE": str(c["deadline"]),
-             "SWARMORY_PROMPT": prompt(c, member), "SWARMORY_ARGS": "\n".join(member.get("args") or ()),
+             "SWARMORY_ARGS": "\n".join(member.get("args") or ()),
              **({"SWARMORY_MODEL_META": json.dumps(meta)} if meta else {}),
              **{f"SWARMORY_{k.upper()}": member[k] for k in harness.COMMAND_FIELDS if member.get(k)}},
-            tuple(c.get("grants", ())), (self.host, *c.get("allow", ())), f"runs/{run.id}/members/{member['id']}")
+            tuple(c.get("grants", ())), self.hosts(run), self.home(run, member["id"]))
 
     def job(self, run, claimed: dict) -> WorkerSpec:
         """A job's worker. It must be gone at SWARMORY_DEADLINE, the job's limit. HARBOR, when the server has one, is
@@ -147,4 +194,4 @@ class Supervisor:
                "SWARMORY_SPEND": claimed["spend"], "SWARMORY_DEADLINE": str(job["until"]), "SWARMORY_JOB": job["id"]}
         if os.environ.get("HARBOR"):
             env["HARBOR"] = os.environ["HARBOR"]
-        return WorkerSpec(f"{run.id}/job/{job['id']}", env, home=f"runs/{run.id}/jobs/{job['id']}")
+        return WorkerSpec(f"{run.id}/job/{job['id']}", env, grants=SECRETS, home=f"runs/{run.id}/jobs/{job['id']}")

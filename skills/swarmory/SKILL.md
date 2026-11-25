@@ -163,7 +163,7 @@ the server's runs, and `swarmory use RUN` switches to another. Keep this machine
 swarmory status                  # time left, cost per agent, the viewer link
 swarmory read --all              # the team's messages; marks nothing read
 swarmory issues                  # the board
-swarmory wait --timeout 300      # returns when someone writes to the person; exits 4 after 300 s with none
+swarmory wait --timeout 120      # returns when someone writes to the person; exits 4 after 120 s with none
 ```
 
 Agents keep taking turns, and spending, until the deadline. Reaching the budget doesn't end the run either: agents stop
@@ -279,25 +279,26 @@ printenv ANTHROPIC_API_KEY > /dev/null && echo set || echo missing
 
 ## Write the mission
 
-Each agent gets a prompt from swarmory with its name, the roster, its role, the deadline, how to push, the `swarmory`
-chat and board commands, and that it works in turns. It is told to read `BRIEF.md`. It also reads the mission's
-`CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex), and nothing from outside its clone. So BRIEF.md must say everything
-else: the goal, how to check it, and how the team works. [playbooks/team.md](playbooks/team.md) is a "How we work"
-section to start from, and [references/research.md](references/research.md) says what helps or hurts a team.
+Each agent's starting prompt is saved at `runs/RUN/members/ID/prompt.md`. It opens with BRIEF.md, whole. Then it
+gives the agent's name, the roster, its role, the deadline, its machine, the `swarmory` commands, a default way to
+split work and use git, the mission's skills, and Harbor jobs when the run has them. The mission's `CLAUDE.md`,
+`AGENTS.md` and `GEMINI.md` don't load on their own, and the prompt says they describe the project, not the mission.
+So BRIEF.md says the goal, how to check it, and how the team works where that differs from the default.
+[playbooks/team.md](playbooks/team.md) is a "How we work" section to start from, and [references/research.md](references/research.md) says what helps or hurts a team.
 
 ```
 wordfreq/
   BRIEF.md         required. Its first line is the first commit's message.
   team.toml        optional: names, roles and args for each agent
-  setup.sh         optional: installs tools in each clone before the first session; safe to run twice
+  setup.sh         optional: installs tools in each clone each time its worker starts; safe to run twice
   .agents/skills/  optional: skills for the agents
   ...              starting code, data, docs
 ```
 
 Everything in the folder reaches the agents, except what `.gitignore` ignores, `.git`, `.env*`, `*.pem`, `*.key`, and
 any symlink that points outside the folder. Leave out answers and private notes. `setup.sh` must work on this machine
-and in a Debian sandbox. If it fails, the agent starts anyway and the failure is only in its `agent.log`, so try it on
-this machine first.
+and in a Debian sandbox. It runs again on every worker start, as a restarted Modal sandbox keeps only HOME and the
+clone. If it fails, the agent's next session is told, with the end of its output, so try it on this machine first.
 
 ### team.toml
 
@@ -351,8 +352,8 @@ resume = "my-agent --headless --continue --model {model} {prompt}"
 
 ### Skills, grants and other options
 
-To give agents a skill, run this in the mission folder. Claude Code and Codex find it on their own. For other coding
-agents, name its path in BRIEF.md.
+To give agents a skill, run this in the mission folder. Every coding agent gets the mission's `.agents/skills` as its
+own skills, and the starting prompt lists them.
 
 ```sh
 npx skills add vtrivedy/swarmory --skill running-harbor-jobs -a claude-code -a codex -y

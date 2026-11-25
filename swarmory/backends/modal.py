@@ -31,8 +31,9 @@ from pathlib import Path
 
 import modal
 
-from swarmory import PORT, harbor
+from swarmory import PORT
 from swarmory.backends.base import WorkerSpec
+from swarmory.control_plane.jobs import PACKAGES
 from swarmory.harness import HARNESSES, of
 
 APP, WORKERS = "swarmory", "swarmory-workers"
@@ -41,6 +42,14 @@ SERVER_SECRET = "swarmory-server"  # the server's: provider keys or logins, and 
 JOB_SECRET = "swarmory-modal"  # what job workers get: Harbor's Modal token
 CODE = "/opt/swarmory"  # where images hold the swarmory package
 MOUNT = "/swarmory"  # an agent's folder of the Volume: its SWARMORY_DIR, with its HOME in it
+DATA = "/data"  # where the server mounts the whole Volume
+# caches stay in the sandbox, off the Volume, which would otherwise keep every download an agent makes
+CACHE = "/tmp/cache"
+CACHES = {"XDG_CACHE_HOME": CACHE, "PIP_CACHE_DIR": f"{CACHE}/pip", "UV_CACHE_DIR": f"{CACHE}/uv",
+          "UV_TOOL_DIR": f"{CACHE}/uv-tools", "UV_TOOL_BIN_DIR": f"{CACHE}/bin",
+          "UV_PYTHON_INSTALL_DIR": f"{CACHE}/uv-python", "npm_config_cache": f"{CACHE}/npm"}
+# setup.sh runs on every start, so tools it installs here come back. A tool's links stay with the tool: links left on
+# the Volume to a tool a restart lost would make `uv tool install` refuse to reinstall it
 TAGS = ("run", "role", "id")
 # (reserved, limit): Modal bills the larger of the reservation and what is used
 SERVER_SIZE = {"cpu": (1.0, 2.0), "memory": (1024, 2048)}  # a core, so its LiteLLM starts in seconds
@@ -90,6 +99,8 @@ def server_image():
 
 
 class Modal:
+    kind = "modal"
+
     def __init__(self):
         self.images = {"agent": os.environ.get(AGENT_IMAGE), "job": os.environ.get(JOB_IMAGE)}
         self.app = modal.App.lookup(WORKERS, create_if_missing=True)
@@ -108,10 +119,15 @@ class Modal:
         more = {"timeout": min(LONGEST, int(float(spec.env["SWARMORY_DEADLINE"]) - time.time()) + GRACE)}
         if spec.allow_hosts:
             more["outbound_domain_allowlist"] = list(spec.allow_hosts)
-        if spec.role == "agent":  # its log and its HOME are in its folder of the Volume
-            command = ("bash", "-c", f"mkdir -p {MOUNT}/home && exec {shlex.join(command)} >> {MOUNT}/agent.log 2>&1")
-            env.update(of({"harness": spec.env["SWARMORY_HARNESS"]}).sandboxed, SWARMORY_DIR=MOUNT,
-                       HOME=f"{MOUNT}/home")
+        if spec.role == "agent":  # its log and HOME are in its folder of the Volume, what it installs there on PATH
+            # it mounts what the Volume had committed when it starts: the clone and prompt.md the server just wrote.
+            # `sync` commits a v2 Volume and, unlike volume.commit(), reloads nothing, which open files would refuse
+            subprocess.run(["sync", DATA], check=True)
+            command = ("bash", "-c", f"mkdir -p {MOUNT}/home {CACHE}/bin && "
+                       f"PATH={CACHE}/bin:{MOUNT}/home/.local/bin:$PATH "
+                       f"exec {shlex.join(command)} >> {MOUNT}/agent.log 2>&1")
+            env.update({**CACHES, **of({"harness": spec.env["SWARMORY_HARNESS"]}).sandboxed, "SWARMORY_DIR": MOUNT,
+                        "HOME": f"{MOUNT}/home"})
             more.update(AGENT_SIZE, volumes={MOUNT: volume.with_mount_options(sub_path=spec.home)})
         secrets = spec.grants if spec.role == "agent" else (JOB_SECRET,)
         modal.Sandbox.create(*command, app=self.app, image=modal.Image.from_id(self.images[spec.role]), env=env,
@@ -148,7 +164,7 @@ class Modal:
 PASSED = {k: os.environ[k] for k in (AGENT_IMAGE, JOB_IMAGE) if os.environ.get(k)}
 
 
-@app.function(image=server_image(), volumes={"/data": volume},
+@app.function(image=server_image(), volumes={DATA: volume},
               secrets=[modal.Secret.from_name(SERVER_SECRET), modal.Secret.from_dict(PASSED)],
               min_containers=1, max_containers=1,  # one server: two would write one data directory
               timeout=24 * 3600, **SERVER_SIZE)
@@ -159,7 +175,7 @@ def server():
     url = server.get_web_url().rstrip("/")  # this container's own handle, which Modal hydrated before calling this
     p = subprocess.Popen(  # the container's PYTHONPATH holds Modal's own package, which the backend imports
         [sys.executable, "-m", "swarmory.cli", "serve", "--backend", "modal", "--host", "0.0.0.0", "--port", str(PORT),
-         "--data", "/data", "--url", url, "--sync"],
+         "--data", DATA, "--url", url],
         cwd=CODE, env={**os.environ, "PYTHONPATH": f"{CODE}:{os.environ.get('PYTHONPATH', '')}",
                        "SWARMORY_PROXY_LITELLM": "/opt/litellm/bin/litellm"})
     threading.Thread(target=lambda: os._exit(p.wait() or 1), daemon=True).start()
@@ -176,7 +192,7 @@ def deploy() -> str:
     print("building the images (the first build takes a few minutes)...", flush=True)
     with modal.enable_output():
         built = {AGENT_IMAGE: worker_image(AGENT_APT, run=AGENT_RUN).build(target).object_id,
-                 JOB_IMAGE: worker_image(pip=(harbor.VERSION,)).env({"HARBOR": "harbor"}).build(target).object_id}
+                 JOB_IMAGE: worker_image(pip=PACKAGES).env({"HARBOR": "harbor"}).build(target).object_id}
     subprocess.run([sys.executable, "-m", "modal", "deploy", "--strategy", "recreate", "-m", __name__], check=True,
                    env={**os.environ, **built})
     return modal.Function.from_name(APP, "server").get_web_url().rstrip("/")
