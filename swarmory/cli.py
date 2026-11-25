@@ -512,8 +512,9 @@ def server():
 
 
 def answers(url) -> bool:
-    try:
-        return fetch(url, "/health", None, timeout=3).get("ok") is True
+    local = urllib.parse.urlsplit(url).hostname in ("127.0.0.1", "localhost")
+    try:  # a Modal server that has scaled to zero takes up to a minute to start
+        return fetch(url, "/health", None, timeout=3 if local else 60).get("ok") is True
     except (Refused, ConnectionError, ValueError):
         return False
 
