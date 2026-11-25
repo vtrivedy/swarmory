@@ -1,7 +1,8 @@
-"""A Harbor agent that makes no model calls. It runs a task's preflight/preflight_checks.sh in the solver's container,
-as the solver's user, under the network the run will use, and saves the output as agent/preflight.txt in the trial.
+"""Run a task's preflight/preflight_checks.sh in the solver's container, with no model calls.
 
-    PYTHONPATH=skills/eval-factory/scripts harbor run -p tasks/ -i <task-name> -a preflight_agent:PreflightAgent \\
+It runs as the solver's user, under the network the run will use. It saves the output as agent/preflight.txt.
+
+    PYTHONPATH=<skill folder>/scripts harbor run -p tasks/ -i <task-name> -a preflight_agent:PreflightAgent \\
         --ak script=$PWD/tasks/<task-name>/preflight/preflight_checks.sh --env modal -n 1 -y
 
 Harbor 0.23 passes the task folder only to its own oracle agent, so the script path comes in as an agent argument.

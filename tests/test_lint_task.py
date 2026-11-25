@@ -23,7 +23,7 @@ environment_mode = "separate"
     "tests/cases/reference/output/answer.txt": "42\n",
 }
 
-SEALED = {"swarmory_job_sealed"}  # what a swarmory job refuses
+SEALED = {"sealed"}  # what a sealed task refuses
 BREAKS = [  # (the checks that fail, the file, the text replaced, its replacement)
     ({"verifier_separate"}, "task.toml", 'environment_mode = "separate"', 'environment_mode = "shared"'),
     ({"agent_user"}, "task.toml", 'user = "agent"', 'user = "root"'),

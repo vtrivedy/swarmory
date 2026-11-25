@@ -1,12 +1,17 @@
-"""What a small number of attempts can and can't tell you.
+"""Intervals and decision odds for small numbers of runs.
 
     python3 probe_odds.py wilson 2 8
     python3 probe_odds.py rule --attempts 4 --kill-at 3
     python3 probe_odds.py rule --attempts 32 --keep 9 15
+    python3 probe_odds.py set summary.json
     python3 probe_odds.py paired before.json after.json
 
-`paired` reads two `summarize_runs.py --json` outputs, one model or agent version each, and gives the 95% interval
-of the mean per-task difference in pass rate (after minus before) over the tasks both scored.
+`wilson` gives the 95% interval for one task's pass count. `rule` shows how often a keep or kill rule fires at each
+true pass rate, so you can choose the rule before the runs. `set` reads one `summarize_runs.py --json` file made with
+`--first N`. Per model, it gives the mean of per-task pass rates with a standard error clustered by task, plus pass@k
+and pass^k. It needs at least two tasks with equal runs each.
+`paired` reads two such files, one model or agent version each. It gives the 95% interval of the mean per-task
+difference in pass rate, after minus before, over the tasks both scored.
 """
 import argparse
 import json
@@ -44,7 +49,7 @@ def pass_rates(path):
 
 
 def paired(before, after, z=1.96):
-    """Per-task differences, their mean, its standard error and a 95% interval."""
+    """Return per-task differences, their mean, its standard error, and a 95% interval."""
     tasks = sorted(before.keys() & after.keys())
     diffs = {task: after[task] - before[task] for task in tasks}
     if len(diffs) < 2:
@@ -66,6 +71,8 @@ def main(argv=None):
     group.add_argument("--kill-at", type=int, help="kill when passes reach this count")
     group.add_argument("--keep", type=int, nargs=2, metavar=("LOW", "HIGH"), help="keep when passes land in this range")
     r.add_argument("--rates", type=float, nargs="+", default=RATES)
+    s = sub.add_parser("set", help="per-model pass rate over tasks, clustered by task, with pass@k and pass^k")
+    s.add_argument("summary", help="a summarize_runs.py --json file")
     p = sub.add_parser("paired", help="interval of the per-task difference between two summarize_runs.py --json files")
     p.add_argument("before")
     p.add_argument("after")
@@ -80,6 +87,24 @@ def main(argv=None):
         if unpaired:
             print(f"left out, scored in only one file: {', '.join(unpaired)}")
         print(f"{len(diffs)} tasks, mean difference {centre:+.1%}, SE {se:.1%}, 95% interval {low:+.1%} to {high:+.1%}")
+        return
+
+    if args.command == "set":
+        by_model = {}
+        for row in json.loads(Path(args.summary).read_text()):
+            if row["scored"]:
+                by_model.setdefault(row["model"], []).append(row)
+        for model, rows in sorted(by_model.items()):
+            if len(rows) < 2:
+                raise SystemExit(f"{model} has {len(rows)} scored task. A set interval needs at least 2; use wilson.")
+            if len({r["scored"] for r in rows}) > 1:
+                raise SystemExit(f"{model} has unequal runs per task. Rerun summarize_runs.py with --first N.")
+            rates = [r["passes"] / r["scored"] for r in rows]
+            centre, se, k = mean(rates), stdev(rates) / sqrt(len(rates)), rows[0]["scored"]
+            print(f"{model}\t{len(rows)} tasks\tmean pass rate {centre:.1%}, SE {se:.1%}, 95% interval "
+                  f"{max(0, centre - 1.96 * se):.1%} to {min(1, centre + 1.96 * se):.1%}\t"
+                  f"pass@{k} {sum(r['passes'] > 0 for r in rows)} of {len(rows)}\t"
+                  f"pass^{k} {sum(r['passes'] == r['scored'] for r in rows)} of {len(rows)}")
         return
 
     if args.command == "wilson":
