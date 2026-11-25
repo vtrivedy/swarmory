@@ -51,9 +51,9 @@ def own(env: dict) -> dict:
 
 
 def link_skills(work: Path):
-    """Links each of the mission's skills, a folder of work/skills with a SKILL.md, into each folder of SKILLS, and
-    removes the links there to skills of work/skills that are gone. It touches no other link."""
-    mine = work / "skills"
+    """Links each of the mission's skills, a folder of work/.agents/skills with a SKILL.md, into each folder of SKILLS,
+    and removes the links there to its skills that are gone. It touches no other link."""
+    mine = work / ".agents" / "skills"
     wanted = {p.parent.name: str(p.parent) for p in mine.glob("*/SKILL.md")}
     for folder in (Path.home() / d for d in SKILLS):
         folder.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,5 @@
 """An agent's starting prompt: worker/prompt.md filled in from the run's config, the mission as main has it (BRIEF.md
-and the skills in skills/), and where the agent runs. The supervisor writes it to members/ID/prompt.md before each
+and its skills in .agents/skills/), and where the agent runs. The supervisor writes it to members/ID/prompt.md before each
 start of the agent's worker, which gives it to every fresh conversation."""
 import string
 import time
@@ -10,6 +10,7 @@ from swarmory import harness
 from .jobs import git
 from .team import IDLE
 
+SKILLS = ".agents/skills"  # a mission's skills, where `npx skills add` puts them
 TEMPLATE = Path(__file__).resolve().parents[1] / "worker" / "prompt.md"
 BLOCK = ("|", ">", "|-", ">-", "|+", ">+")  # YAML's markers of a value on the indented lines below its key
 
@@ -38,16 +39,17 @@ def frontmatter(text: str) -> dict:
 
 
 def mission(repo: Path) -> tuple[str, list]:
-    """BRIEF.md on main, and the folder, name and description of each skill, skills/FOLDER/SKILL.md, on main. A file
+    """BRIEF.md on main, and the folder, name and description of each skill, .agents/skills/FOLDER/SKILL.md,
+    on main. A file
     the team removed reads as empty, so the agent still starts."""
     show = lambda path: (git(repo, "show", f"main:{path}", check=False) or b"").decode(errors="replace")  # noqa: E731
-    tree = git(repo, "ls-tree", "-r", "--name-only", "main", "--", "skills").decode().splitlines()
+    tree = git(repo, "ls-tree", "-r", "--name-only", "main", "--", SKILLS).decode().splitlines()
     skills = []
     for path in tree:
         parts = path.split("/")
-        if len(parts) == 3 and parts[2] == "SKILL.md":
+        if len(parts) == 4 and parts[3] == "SKILL.md":
             meta = frontmatter(show(path))
-            skills.append((parts[1], meta.get("name") or parts[1], meta.get("description", "")))
+            skills.append((parts[2], meta.get("name") or parts[2], meta.get("description", "")))
     return show("BRIEF.md"), skills
 
 
@@ -64,10 +66,10 @@ def network(backend: str, hosts: tuple) -> str:
 def skill_list(skills: list) -> str:
     if not skills:
         return ""
-    return ("## Use the mission's skills\n\nThe mission comes with these skills, each a folder in skills/ of your "
-            "clone. Your coding agent has them as its own skills. When a task matches a skill's description, use "
+    return ("## Use the mission's skills\n\nThe mission comes with these skills, each a folder in .agents/skills/ "
+            "of your clone. Your coding agent has them as its own skills. When a task matches a skill's description, use "
             "that skill: read its SKILL.md before you start and follow it.\n\n"
-            + "\n".join(f"- {name} (skills/{folder}/SKILL.md)" + (f": {about}" if about else "")
+            + "\n".join(f"- {name} ({SKILLS}/{folder}/SKILL.md)" + (f": {about}" if about else "")
                         for folder, name, about in skills) + "\n\n")
 
 

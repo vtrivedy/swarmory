@@ -26,7 +26,7 @@ extra=""
 PY=$(uv run -q $extra python -c 'import sys; print(sys.executable)') || exit 1  # this checkout's swarmory
 swarmory() { "$PY" -m swarmory.cli "$@"; }
 say() { echo "e2e-evals $(date +%H:%M:%S) $*"; }
-args=(start tests/mission --hours 0.5 --team claude-code:claude-haiku-5-5=1 --jobs)
+args=(start tests/mission --hours 0.5 --budget 5 --team claude-code:claude-haiku-5-5=1 --jobs)
 [ -n "${E2E_SUBSCRIPTION:-}" ] && args+=(--subscription)
 data=$(mktemp -d "${TMPDIR:-/tmp}/e2e-evals.XXXXXX")
 run="" server=""

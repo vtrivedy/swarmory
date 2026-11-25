@@ -138,9 +138,9 @@ def test_the_missions_skills_are_linked_where_every_coding_agent_finds_them(tmp_
     home, work = tmp_path / "home", tmp_path / "work"
     monkeypatch.setenv("HOME", str(home))
     for name in ("a", "b"):
-        (work / "skills" / name).mkdir(parents=True)
-        (work / "skills" / name / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
-    (work / "skills" / "notes").mkdir()  # no SKILL.md: not a skill
+        (work / ".agents" / "skills" / name).mkdir(parents=True)
+        (work / ".agents" / "skills" / name / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
+    (work / ".agents" / "skills" / "notes").mkdir()  # no SKILL.md: not a skill
     (home / ".claude" / "skills").mkdir(parents=True)
     (home / ".claude" / "skills" / "own").symlink_to(tmp_path)  # not the mission's: left alone
     agent.link_skills(work)
@@ -148,7 +148,7 @@ def test_the_missions_skills_are_linked_where_every_coding_agent_finds_them(tmp_
     for d in agent.SKILLS:
         assert {p.name for p in (home / d).iterdir()} - {"own"} == {"a", "b"}
         assert (home / d / "a" / "SKILL.md").is_file()
-    shutil.rmtree(work / "skills" / "b")
+    shutil.rmtree(work / ".agents" / "skills" / "b")
     agent.link_skills(work)
     assert sorted(p.name for p in (home / ".claude" / "skills").iterdir()) == ["a", "own"]
     assert [p.name for p in (home / ".agents" / "skills").iterdir()] == ["a"]

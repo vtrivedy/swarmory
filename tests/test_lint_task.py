@@ -1,4 +1,4 @@
-"""swarmory_harbor/skills/eval-factory/scripts/lint_task.py: a sealed task passes, and each isolation or grading break
+"""skills/eval-factory/scripts/lint_task.py: a sealed task passes, and each isolation or grading break
 fails."""
 import json
 

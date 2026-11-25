@@ -26,7 +26,7 @@ The traps below still apply to what those jobs report. The rest of this page is 
 3. Set two variables:
 
    ```bash
-   S=<swarmory checkout>/swarmory_harbor/skills/eval-factory/scripts
+   S=<this skill's folder>/scripts
    TASK=<absolute path to the task folder>
    ```
 

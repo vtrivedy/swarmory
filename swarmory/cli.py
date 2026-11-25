@@ -167,7 +167,8 @@ def load_login():
     """(the run's address, the token) that run verbs use: a member's run, or the operator's current run."""
     d = saved()
     if not d:
-        fail("not logged in: run `swarmory login URL TOKEN`")
+        fail("not logged in: `swarmory start MISSION` starts a local server and logs you in to it, and "
+             "`swarmory login URL TOKEN` logs you in to another")
     if "/r/" not in d["url"] and not d.get("run"):
         fail("you are logged in to a server: pick a run with `swarmory use RUN` (`swarmory runs` lists them)")
     return run_url(d["url"], d.get("run")), d["token"]
@@ -489,7 +490,8 @@ def login(pos):
     if not pos:
         d = saved()
         if not d:
-            fail("not logged in: run `swarmory login URL TOKEN`")
+            fail("not logged in: `swarmory start MISSION` starts a local server and logs you in to it, and "
+                 "`swarmory login URL TOKEN` logs you in to another")
         return {"url": run_url(d["url"], d.get("run"))}
     url = pos[0].rstrip("/")
     u = urllib.parse.urlsplit(url)
@@ -611,17 +613,29 @@ def start_run(mission, team=None, **options) -> dict:
              "SWARMORY_LOGIN to another file")
     mine = bool(d)  # an operator's login, whose server this asks
     url, token = (d["url"], d["token"]) if mine else (LOCAL, secrets.token_hex(16))
-    if not answers(url):
-        if urllib.parse.urlsplit(url).hostname not in ("127.0.0.1", "localhost"):
-            fail("the server at %s does not answer" % url)
+    local = urllib.parse.urlsplit(url).hostname in ("127.0.0.1", "localhost")
+    if local and not answers(url):  # a remote one is not asked first: Modal starts a stopped server on any request
         if not mine:  # before the server starts: an interrupted or refused `start` leaves no server with a lost token
             save_login(url, token)
         serve_here(url, token)
     elif not mine:
-        fail("a server answers at %s, and you have no login for it: `swarmory login %s TOKEN`, with its operator token"
-             % (url, url))
-    r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
-    rid = r["data"]["run"]
+        fail("a server answers at %s, and the login file %s has no token for it: log in with its operator token, "
+             "`swarmory login %s TOKEN`, or stop that server and run this again" % (url, LOGIN, url))
+    try:
+        r = fetch(url, "/api/start", token, {**options, "mission": mission.name, "team": team, "me": me})
+    except Refused as e:  # a local server keeps the environment of the shell that started it
+        have = [k for k in re.findall(r"\b[A-Z][A-Z0-9_]*_(?:API_KEY|TOKEN|JSON)\b", str(e)) if os.environ.get(k)]
+        if have and urllib.parse.urlsplit(url).hostname in ("127.0.0.1", "localhost"):
+            fail("%s\nThis shell has %s, but the local server started without it. Stop the server, "
+                 "`pkill -f '[s]warmory.cli serve'`, and run this again." % (e, have[0]))
+        raise
+    rid = r["data"].get("run")
+    if options.get("dry"):
+        if rid:  # a server older than --dry-run ignores it and starts the run
+            fetch(url, "/api/stop", token, {"run": rid})
+            fail("the server at %s is older than this swarmory and has no dry run, so it started %s, now stopped. "
+                 "Update the server: `swarmory deploy` on Modal, or stop the local one and run this again" % (url, rid))
+        return r
     try:
         seed.make_seed(mission, run_url(url, rid), token)
     except SystemExit as e:  # fail()'s, from git
@@ -629,6 +643,16 @@ def start_run(mission, team=None, **options) -> dict:
         sys.exit("%s; the run is stopped" % e)
     save_login(url, token, rid)
     return r
+
+
+def budget_arg(s: str):
+    """--budget: dollars, or `none` for a run with no limit, which must be said, never assumed."""
+    if s.lower() == "none":
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("give dollars, such as 5, or none for no limit") from None
 
 
 def start(argv):
@@ -640,21 +664,25 @@ def start(argv):
     p.add_argument("mission", help="a mission folder: BRIEF.md and whatever the team needs")
     p.add_argument("--team", action="append", metavar="HARNESS[:MODEL]=N",
                    help=f"{names}; repeatable (default: the mission's team.toml, else two of the first)")
-    p.add_argument("--hours", type=float, default=HOURS, help=f"how long the run lasts ({HOURS})")
-    p.add_argument("--budget", type=float, metavar="USD", help="the most the run's model calls may cost, in dollars; "
-                   "a budgeted run refuses a call to a model that has no listed price, so name each agent's model")
+    p.add_argument("--hours", type=float, default=HOURS,
+                   help=f"how long the run lasts, in hours: 0.5 is 30 minutes ({HOURS})")
+    p.add_argument("--budget", type=budget_arg, metavar="USD", required=True,
+                   help="the most the run's model calls may cost, in dollars at list prices, or `none` for no limit. "
+                   "A budgeted run refuses a model that has no listed price, which the dry run checks")
     p.add_argument("--grant", action="append", metavar="NAME", help="give every agent NAME: a variable of a local "
                    "server's environment, or a Modal secret; repeatable")
     p.add_argument("--allow", action="append", metavar="HOST", help="on Modal, let agents reach HOST too; repeatable")
     p.add_argument("--jobs", action="store_true", help="let members ask for jobs with `swarmory job`: Harbor evals "
                    "of the task folders they commit")
     p.add_argument("--subscription", action="store_true", help="call models with the server's subscription logins")
+    p.add_argument("--dry-run", action="store_true", help="check the run and print its server, deadline, budget "
+                   "and team, but start nothing")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     r = start_run(a.mission, a.team and parse_team(a.team), hours=a.hours, budget=a.budget, grant=a.grant or [],
-                  allow=a.allow or [], jobs=a.jobs, subscription=a.subscription)
+                  allow=a.allow or [], jobs=a.jobs, subscription=a.subscription, dry=a.dry_run)
     show(r, {"--json": a.json})
-    if not a.json:
+    if not a.json and not a.dry_run:
         out("Pushed the mission to main: the agents are starting. `swarmory` now acts as you in this run.")
 
 
@@ -697,7 +725,9 @@ def mcp():
             tool["inputSchema"]["properties"]["run"] = run
     start = tools["start"]["inputSchema"]
     del start["properties"]["me"]  # start_run() works it out, as `swarmory start` does
-    start["required"] = ["mission"]
+    start["required"] = ["mission", "budget"]  # as `swarmory start --budget`: no limit is said, never assumed
+    start["properties"]["budget"] = {"type": ["number", "null"], "description": "the most its model calls may cost, "
+                                     "in dollars at list prices, or null for no limit"}
     start["properties"]["mission"]["description"] = ("the path of a mission folder on this machine: BRIEF.md and "
                                                      "whatever the team needs")
     start["properties"]["team"]["description"] += " (default: the mission's team.toml, else two of the first harness)"

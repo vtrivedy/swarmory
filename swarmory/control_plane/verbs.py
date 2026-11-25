@@ -222,6 +222,14 @@ def jobs_text(r: dict, req: dict) -> str:
 
 
 def started_text(r: dict, req: dict) -> str:
+    if r.get("dry"):
+        return "\n".join([f"server  {r['server']}",
+                          f"until   {time.strftime('%H:%M %Z', time.localtime(r['deadline']))}",
+                          "budget  " + ("none: model calls have no limit" if r["budget"] is None
+                                        else money(r["budget"])), f"you     {r['me']}",
+                          *(f"agent   {m['id']:10} {m['harness']:13} {m['model'] or 'its default model'}"
+                            for m in r["members"]),
+                          "Dry run: nothing started."])
     return "\n".join([f"run    {r['run']}: until {time.strftime('%H:%M %Z', time.localtime(r['deadline']))}",
                       f"url    {r['url']}",
                       f"watch  {r['view']}   (read-only: anyone with the link sees the whole run)"])
@@ -305,7 +313,13 @@ def find(server, req: dict):
 
 
 def start(server, req: dict, token: str) -> dict:
-    config, view = new_run(req, server.backend, os.environ, token, lambda m: server.litellm.find(m)[0])
+    config, view = new_run(req, server.backend, os.environ, token, lambda m: server.litellm.find(m)[0],
+                           lambda m: server.litellm.find(m)[1] is not None)
+    if req.get("dry"):
+        return {"dry": True, "server": server.url, "deadline": config["deadline"],
+                "budget": config["budget"], "me": config["operator"],
+                "members": [{k: m[k] for k in ("id", "harness", "model")} for m in config["members"]
+                            if m["kind"] == "agent"]}
     run, url = server.runs.create(config), f"{server.url}/r/{config['run']}"
     return {"run": run.id, "url": url, "view": f"{url}/view#{view}", "deadline": config["deadline"],
             "members": [m["id"] for m in config["members"]]}
@@ -347,7 +361,9 @@ VERBS = {v.name: v for v in [
                    "secrets"),
              Param("allow", "array", "on Modal, hosts agents may reach too"),
              Param("jobs", "boolean", "members may ask for Harbor jobs"),
-             Param("subscription", "boolean", "call models with the server's subscription logins, not API keys")),
+             Param("subscription", "boolean", "call models with the server's subscription logins, not API keys"),
+             Param("dry", "boolean", "check the run and answer with its server, deadline, budget and team, but "
+                   "start nothing")),
          WRITE),
     Verb("runs", "server", "server", "Every run, newest first, with its state: running, ended or stopped.", listing,
          runs_text),
