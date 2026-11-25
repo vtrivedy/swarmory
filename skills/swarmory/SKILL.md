@@ -20,8 +20,8 @@ every command and flag.
 ## Two rules
 
 1. **Ask before anything that spends.** A run makes model calls on the person's API credit or plan, and on Modal it
-   uses their Modal compute. Show the person the `--dry-run` output and wait for a yes before each run and before
-   `swarmory deploy`.
+   uses their Modal compute. Show the person the `--dry-run` output and wait for a yes before each run. Before
+   `swarmory deploy`, tell them it keeps a server running in their Modal account, and wait for a yes.
 2. **Never touch a secret.** Don't read, print, write or pass a model key, a subscription login, or the operator token.
    No `cat .env`, no `env | grep KEY`, no reading `~/.codex/auth.json` or `~/.swarmory/login`. The person sets keys in
    their shell profile or Modal secret. Moving `~/.swarmory/login` aside with `mv`, on the person's yes, is fine.
@@ -43,8 +43,8 @@ The server and the agents run either on this machine or on Modal. Use this machi
 - **Modal**, a cloud. The server runs there all the time, and each agent runs in its own sandbox. This machine needs
   only swarmory. Runs go on with the laptop closed, and agents never see a key. See [Run on Modal](#run-on-modal).
 
-`swarmory login` prints the server that `swarmory` commands go to, without the token. With no login, `start` uses a
-local server.
+`swarmory login` prints the server that `swarmory` commands go to, without the token, and the run they act in, as
+`SERVER/r/RUN`. With no login, `start` uses a local server.
 
 ## Run on this machine
 
@@ -105,9 +105,10 @@ One agent writes wc.py and the other writes the tests. Each pushes small commits
 swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
 ```
 
-`--hours` takes decimals: 0.5 is 30 minutes. The dry run starts the local server if none is running, checks the run,
-and starts nothing. If a key or a coding agent is missing, it exits non-zero and names it. It checks that a key is set,
-not that it works. On success it prints something like:
+`--hours` takes decimals: 0.5 is 30 minutes. Repeat `--team` to mix agents, such as `--team
+claude-code:claude-sonnet-5-5=2 --team codex:gpt-6.1-sol=2`. The dry run starts the local server if none is running,
+checks the run, and starts nothing. If a key, login or coding agent is missing on the server, local or Modal, it exits
+non-zero and names it. It checks that a key is set, not that it works. On success it prints something like:
 
 ```
 No server answers at http://127.0.0.1:7700: starting one here (`swarmory serve`, its output in ~/.swarmory/serve.log)...
@@ -198,7 +199,9 @@ uvx modal secret create swarmory-server SWARMORY_OPERATOR_TOKEN=$TOKEN ANTHROPIC
 ```
 
 For `--subscription`, the secret holds `CLAUDE_CODE_OAUTH_TOKEN=...` and `CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"`
-in place of the keys. Then, on the person's yes, you install swarmory with Modal support and deploy:
+in place of the keys, or beside them. Getting those logins needs `claude` and `codex` on this machine (see the
+[install table](#1-install)), though the agents' sandboxes have their own. Then, on the person's yes, you install
+swarmory with Modal support and deploy:
 
 ```sh
 uv tool install --force 'swarmory[modal] @ git+https://github.com/vtrivedy/swarmory'
@@ -213,13 +216,15 @@ swarmory login URL $TOKEN
 
 ### 3. Run
 
-Steps 2 to 5 of [Run on this machine](#run-on-this-machine) work the same, and the dry run's `server` line shows the
-Modal URL. `setup.sh` runs in each agent's sandbox, so it can install only from hosts the run allows.
+[Run on this machine](#run-on-this-machine) works the same from the git name in step 1 to step 5, and the dry run's
+`server` line shows the Modal URL. If the dry run says a key or login is missing or will expire before the run ends,
+the person fixes the secret as "Change a key or login" below says. `setup.sh` runs in each agent's sandbox, so it can
+install only from hosts the run allows.
 
 | To | Who runs it |
 |---|---|
 | Update the server | You, on the person's yes: `uv tool upgrade swarmory`, then `swarmory deploy`. Running agents go on, and the URL stays. |
-| Change a key or login | The person: `uvx modal secret create --force swarmory-server ...` with every value and the same token. Then you run `swarmory deploy`. The ChatGPT login goes stale, so they refresh it this way before a codex run if it fails. |
+| Change a key or login | The person: `uvx modal secret create --force swarmory-server ...` with every value and the same token. Then you run `swarmory deploy`. For a stale ChatGPT login, they run any `codex` command first to refresh `~/.codex/auth.json`. |
 | Replace a lost operator token | The person: create the secret again with a new token, then `swarmory login URL NEWTOKEN`. Then you run `swarmory deploy`. |
 | Stop the server | You, on the person's yes: `swarmory stop RUN` for each run, then `uvx modal app stop swarmory`. Runs stay in `swarmory-data`, and `swarmory deploy` serves them again. |
 | Run locally instead | You, on the person's yes: `mv ~/.swarmory/login ~/.swarmory/login.modal`. Move it back to return to Modal. |
