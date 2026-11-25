@@ -512,9 +512,8 @@ def server():
 
 
 def answers(url) -> bool:
-    local = urllib.parse.urlsplit(url).hostname in ("127.0.0.1", "localhost")
-    try:  # a Modal server that has scaled to zero takes up to a minute to start
-        return fetch(url, "/health", None, timeout=3 if local else 60).get("ok") is True
+    try:
+        return fetch(url, "/health", None, timeout=3).get("ok") is True
     except (Refused, ConnectionError, ValueError):
         return False
 
@@ -587,9 +586,8 @@ def start_run(mission, team=None, **options) -> dict:
              "SWARMORY_LOGIN to another file")
     mine = bool(d)  # an operator's login, whose server this asks
     url, token = (d["url"], d["token"]) if mine else (LOCAL, secrets.token_hex(16))
-    if not answers(url):
-        if urllib.parse.urlsplit(url).hostname not in ("127.0.0.1", "localhost"):
-            fail("the server at %s does not answer" % url)
+    local = urllib.parse.urlsplit(url).hostname in ("127.0.0.1", "localhost")
+    if local and not answers(url):  # a remote one is not asked first: Modal starts a stopped server on any request
         if not mine:  # before the server starts: an interrupted or refused `start` leaves no server with a lost token
             save_login(url, token)
         serve_here(url, token)

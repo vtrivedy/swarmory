@@ -24,7 +24,7 @@ every command and flag.
    `swarmory deploy`.
 2. **Never touch a secret.** Don't read, print, write or pass a model key, a subscription login, or the operator token.
    No `cat .env`, no `env | grep KEY`, no reading `~/.codex/auth.json` or `~/.swarmory/login`. The person sets keys in
-   their own terminal or Modal secret. Moving `~/.swarmory/login` aside with `mv`, on the person's yes, is fine.
+   their shell profile or Modal secret. Moving `~/.swarmory/login` aside with `mv`, on the person's yes, is fine.
 
 ## How it works
 
@@ -127,18 +127,12 @@ server, and the run would go there. If the person wants this machine, ask, then 
 mv ~/.swarmory/login ~/.swarmory/login.modal    # moving it back returns to that server
 ```
 
-**If a key is missing,** the local server lacks it. The server keeps the environment of the shell that started it. Your
-shell has a key only if the person's shell profile sets it, or they exported it in a terminal before starting you from
-that terminal. A key they export now reaches neither you nor the server. So ask the person to run these in their own
-terminal, with the key the error names, then run the dry run again yourself:
+**If a key is missing,** ask the person to add it as [Keys and models](#keys-and-models) says, then restart the server
+so it reads the key, and dry-run again:
 
 ```sh
-export ANTHROPIC_API_KEY=...
 pkill -f '[s]warmory.cli serve'
-swarmory start ~/missions/wordfreq --team claude-code:claude-sonnet-5-5=2 --hours 0.5 --budget 5 --dry-run
 ```
-
-Their dry run starts a server with their key, and your commands then use it.
 
 ### 4. Start, on the person's yes
 
@@ -211,17 +205,20 @@ After `login`, every `swarmory` command goes to the Modal server, and steps 2 to
 | Gemini | `GEMINI_API_KEY` | `antigravity:gemini-3.8-flash-low=1`, `pi:gemini/gemini-4-argon=1` |
 | Any other in LiteLLM's price table | `<PROVIDER>_API_KEY` | `codex:xai/grok-4.3=1` needs `XAI_API_KEY` |
 
-To use the person's Claude or ChatGPT plan instead of keys, add `--subscription`. Only `claude-code` and `codex` agents
-work this way, and the server needs the login of each one the team uses, in place of keys. The dry run checks it. For a
-local server, the person sets it in their own terminal as in [step 3](#3-dry-run):
+To use the person's Claude or ChatGPT plan instead, add `--subscription`. It works for `claude-code` and `codex` agents,
+and needs the login of each one the team uses:
+
+| Agents | Login the server needs | The person gets it from |
+|---|---|---|
+| `claude-code` | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` |
+| `codex` | `CODEX_AUTH_JSON` | `export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"`, after `codex login` |
+
+The person puts each key or login in their shell profile, such as `~/.zshrc`, or on Modal in the `swarmory-server`
+secret. Check one is set without printing it:
 
 ```sh
-export CLAUDE_CODE_OAUTH_TOKEN=...                   # claude-code agents: `claude setup-token` prints it
-export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"   # codex agents
+printenv ANTHROPIC_API_KEY > /dev/null && echo set || echo missing
 ```
-
-On Modal, the logins go in the `swarmory-server` secret instead. The server never refreshes the ChatGPT login, so the
-person runs any `codex` command just before setting it.
 
 ## Write the mission
 
