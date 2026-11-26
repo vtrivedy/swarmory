@@ -1,12 +1,8 @@
 # Environment and hardening
 
-Task layout, synthetic data, isolation settings, mock services, preflight checks, leak searches, and known exploits for [SKILL.md](../SKILL.md).
-
 Contents: [task layout](#lay-out-a-task-folder), [synthetic data](#build-hybrid-synthetic-data), [isolation](#isolate-the-solver-from-the-verifier), [submitted code](#isolate-submitted-code), [mock services](#run-a-mock-service-the-solver-cannot-edit), [preflight](#run-the-preflight-inside-the-built-image), [perturbed inputs](#perturb-inputs-when-the-solver-sees-the-tests), [leak searches](#search-for-leaks), and [known exploits](#known-exploits).
 
 ## Lay out a task folder
-
-Keep Harbor task files in `tasks/<task-name>/`. Store working records such as `idea-card.md`, `reviews/`, `labels/`, and `report.md` in `work/<task-name>/`. That split keeps working records out of Harbor uploads and clean git checks.
 
 Copy the starter template from the repository root.
 
@@ -22,7 +18,7 @@ Configure each file in `tasks/<task-name>/` as follows.
 | `tests/<generator>.py` | Run on the host with a fixed seed. Write `tests/key.json`, its `how_established` field, and starting snapshots to `tests/`. Write solver data to `environment/data/`. Commit all outputs. |
 | `environment/Dockerfile` | Add `COPY data/ /app/data/` before `USER agent`, and `chown` writable solver directories. Never write `COPY .`, because `lint_task.py` rejects it. Pin base tags while building and pin digests when freezing. |
 | `tests/Dockerfile` | Add every file the verifier reads, including snapshots and hidden fixtures, to `COPY`. Keep `USER root`. |
-| `task.toml` | Set `[task] name` to a valid `org/name` string before running `doctor`. Set `[agent] timeout_sec` to the instruction time limit plus 120 seconds for startup. Set `cpus` and `memory_mb` under `[environment]`. Fill `[metadata]`. List every artifact the verifier reads in `artifacts`. |
+| `task.toml` | Set `[agent] timeout_sec` to the instruction time limit plus 120 seconds for startup. Set `cpus` and `memory_mb` under `[environment]`. Fill `[metadata]`. List every artifact the verifier reads in `artifacts`. |
 | `preflight/preflight_checks.sh` | Add one line per tool the claim does not test, plus one line per environment defense. |
 
 Replace every starter placeholder before finishing Phase 2, because the starter files grade the answer 42 and pass checks on their own.
@@ -40,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
 	&& rm -rf /var/lib/apt/lists/*
 ```
 
-Store each paired variant in `tasks/<task-name>-<variant>/`, built by the same generator under a different condition. Build and verify variant one through Phase 3 before copying it to create paired variants.
+Store each paired variant in `tasks/<task-name>-<variant>/`, built by the same generator under a different condition.
 
 ## Build hybrid synthetic data
 
@@ -48,7 +44,7 @@ When a task needs realistic prose such as emails, tickets, logs, or reports, sep
 
 1. Build all IDs, dates, permissions, numeric facts, and entity relationships in seeded host code first.
 2. Assign each fact an ID and pass only allowed fact IDs to the text generator. Never show the text generator the planned answer or rubric.
-3. Never use unverified model output as ground truth. Compute `tests/key.json` strictly from the seeded structured state.
+3. Compute `tests/key.json` strictly from the seeded structured state.
 4. Validate generated files in code for schema shape, banned answer literals, and broken cross-references. Then inspect sample prose for faithfulness before freezing.
 
 ## Isolate the solver from the verifier
@@ -83,7 +79,7 @@ See [run hidden tests on a clean copy](verifiers.md#run-hidden-tests-on-a-clean-
 
 If the solver can write a mock service's state files, the solver can edit the ledger without calling the API. Run the service as `root`, keep its state in a root-only folder, and start it from a root-owned launcher.
 
-Enforce domain rules inside the mock backend itself, never only in `instruction.md` or `tests/verifier.py`. Never branch backend behavior on task ID or expected answer. Detect service errors or rate limits explicitly so outages fail as infrastructure errors instead of scoring 0.
+Detect service errors or rate limits explicitly so outages fail as infrastructure errors instead of scoring 0.
 
 In `environment/Dockerfile`, before `USER agent`, copy the service and launcher.
 
@@ -134,7 +130,7 @@ List the service ledger and call log in `artifacts` in `task.toml`. Store them b
 
 ## Perturb inputs when the solver sees the tests
 
-When the solver can inspect visible test cases, grade on copies perturbed with a fixed seed. Vary sign, scale, order, and size, and include empty inputs. Store a memorized answer as an `exploit-<name>` case that scores 0 on the perturbed copies. Never give the solver a helper that mirrors the verifier score, because that removes verification judgment. When a local check helper is required, expose only a validation score and never the test score.
+When the solver can inspect visible test cases, grade on copies perturbed with a fixed seed. Vary sign, scale, order, and size, and include empty inputs. Store a memorized answer as an `exploit-<name>` case that scores 0 on the perturbed copies. When a local check helper is required, expose only a validation score and never the test score.
 
 ## Search for leaks
 

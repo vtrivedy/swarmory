@@ -1,6 +1,6 @@
 # Model-based grading and calibration
 
-Decision calls, isolated binary rubric judges, and three-way calibration for [SKILL.md](../SKILL.md). Open this file only when deterministic code in [references/verifiers.md](verifiers.md) cannot grade a requirement.
+Open this file only when deterministic code in [references/verifiers.md](verifiers.md) cannot grade a requirement.
 
 Contents: [when to use a judge](#when-to-use-a-judge), [decision calls](#grade-with-a-decision-call), [rubric judges](#grade-open-output-with-a-rubric-judge), and [judge calibration](#calibrate-a-judge).
 

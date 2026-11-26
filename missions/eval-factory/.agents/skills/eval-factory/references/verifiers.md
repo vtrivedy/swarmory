@@ -1,6 +1,6 @@
 # Verifiers and stored cases
 
-Copyable deterministic verifier patterns, error handling, stored cases, and grade records for [SKILL.md](../SKILL.md). For model-based grading and judge calibration, see [references/judges.md](judges.md). Every check returns `{"id": str, "passed": bool}`. Store keys and starting snapshots in `/tests`, which the solver never sees.
+For model-based grading and judge calibration, see [references/judges.md](judges.md). Every check returns `{"id": str, "passed": bool}`. Store keys and starting snapshots in `/tests`, which the solver never sees.
 
 Contents: [template interface](#keep-the-template-interface), [error handling](#handle-errors-one-way), [parsed values](#compare-parsed-values), [final state](#check-final-state-and-collateral-scope), [hidden tests](#run-hidden-tests-on-a-clean-copy), [multiple artifacts](#store-cases-for-several-artifacts), [properties and optimizations](#check-properties-and-optimizations), [path diagnostics](#record-the-path-as-a-diagnostic), [stored cases](#stored-cases), and [grade record](#record-the-grade).
 
@@ -39,7 +39,7 @@ def says_amount(reply: str, expected_cents: int) -> dict:
 
 ## Check final state and collateral scope
 
-Recompute outcomes directly from raw files, database tables, or service ledgers. Never trust a service success flag or environment helper that already decides success. Accept every valid final state rather than brittle syntax proxies, and ensure state complexity prevents random mutations from passing.
+Recompute outcomes directly from raw files, database tables, or service ledgers. Never trust a service success flag or environment helper that already decides success. Accept every valid final state rather than brittle syntax proxies, and make the target state specific enough that a random edit cannot reach it.
 
 When inspecting SQLite or similar databases, open artifacts read-only such as `sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)` so grading cannot mutate state. Compare untouched records against snapshots stored in `/tests`.
 
@@ -188,7 +188,7 @@ Update [tests/test_cases.py](../templates/task/tests/test_cases.py) so `test_ins
 cd tasks/<task-name> && uvx pytest tests -q -p no:cacheprovider
 ```
 
-When `--container-verifier` is required, run every stored case inside the built verifier image instead of host `pytest`. `verify_task.py free --container-verifier` runs every stored case inside the verifier image automatically, and [run free checks](harbor.md#run-free-checks) shows the manual container loop for Phase 2.
+When `--container-verifier` is required, run every stored case inside the built verifier image instead of host `pytest`. [Run free checks](harbor.md#run-free-checks) shows the loop.
 
 Confirm four properties in your tests.
 
@@ -220,4 +220,3 @@ Harbor accepts only finite numbers in `/logs/verifier/reward.json`. Write `rewar
 - Every check without a `diag_` or `decoy_` prefix is required.
 - `failed_check` names the first failed required check, or `null` on a pass.
 - `partial_score` is the fraction of required checks that passed unless the task defines another formula before the first run.
-- Increment `VERSION` in `tests/verifier.py` whenever grading changes, and never mix verifier versions in one table.

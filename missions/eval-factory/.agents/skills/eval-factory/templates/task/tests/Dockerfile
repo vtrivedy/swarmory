@@ -1,4 +1,4 @@
-# In separate mode Harbor builds the verifier image from tests/, and the verifier runs as root.
+# In separate mode Harbor builds the verifier's image from tests/, and the verifier runs as root.
 FROM python:3.12-slim
 # Pin this base image by digest before you measure in Phase 5.
 # Separate mode does not upload tests/. /tests holds only what this file copies, so COPY every file the verifier reads

@@ -8,10 +8,11 @@
 
 `wilson` gives the 95% interval for one task's pass count. `rule` shows how often a keep or kill rule fires at each
 true pass rate, so you can choose the rule before the runs. `set` reads one `summarize_runs.py --json` file made with
-`--first N`. Per model, it gives the mean of per-task pass rates with a task-clustered standard error, a 95% interval
-using the Student t distribution for small task counts, plus pass@k and pass^k. It needs at least two tasks with equal
-runs each. `paired` reads two such files, one model or agent version each, and gives the 95% t-interval of the mean
-per-task difference in pass rate (after minus before) over the tasks both scored.
+`--first N`. Per model, it gives the mean of per-task pass rates with a standard error clustered by task, plus pass@k
+and pass^k. It needs at least two tasks with equal runs each.
+`paired` reads two such files, one model or agent version each. It gives the 95% interval of the mean per-task
+difference in pass rate, after minus before, over the tasks both scored.
+Both intervals use Student's t, because a few tasks give a much wider interval than 1.96 standard errors.
 """
 import argparse
 import json
@@ -33,9 +34,8 @@ T_CRITICAL_95 = {
 
 
 def t_critical_95(n):
-    """Return the two-sided 95% t critical value for sample size n (normal 1.96 for df >= 30)."""
-    df = max(1, n - 1)
-    return T_CRITICAL_95.get(df, 1.96)
+    """Two-sided 95% t critical value for n samples, or the normal 1.96 from 30 degrees of freedom."""
+    return T_CRITICAL_95.get(n - 1, 1.96)
 
 
 def wilson(passes, attempts, z=1.96):
@@ -54,7 +54,7 @@ def chance(rate, attempts, low, high):
 
 
 def pass_rates(path):
-    """Return {task: pass rate} from one summarize_runs.py --json output."""
+    """{task: pass rate} from one summarize_runs.py --json output."""
     rates = {}
     for row in json.loads(Path(path).read_text()):
         if row["task"] in rates:
@@ -64,16 +64,16 @@ def pass_rates(path):
     return rates
 
 
-def paired(before, after, z=None):
-    """Return per-task differences, their mean, standard error, and a 95% interval."""
+def paired(before, after):
+    """Return per-task differences, their mean, its standard error, and a 95% interval."""
     tasks = sorted(before.keys() & after.keys())
     diffs = {task: after[task] - before[task] for task in tasks}
     if len(diffs) < 2:
         raise SystemExit(f"{len(diffs)} task(s) scored in both files. A paired interval needs at least 2.")
     centre = mean(diffs.values())
     se = stdev(diffs.values()) / sqrt(len(diffs))
-    crit = t_critical_95(len(diffs)) if z is None else z
-    return diffs, centre, se, (centre - crit * se, centre + crit * se)
+    t = t_critical_95(len(diffs))
+    return diffs, centre, se, (centre - t * se, centre + t * se)
 
 
 def main(argv=None):
@@ -113,18 +113,16 @@ def main(argv=None):
                 by_model.setdefault(row["model"], []).append(row)
         for model, rows in sorted(by_model.items()):
             if len(rows) < 2:
-                raise SystemExit(f"{model} has {len(rows)} scored task. A set interval needs at least 2. Use wilson.")
+                raise SystemExit(f"{model} has {len(rows)} scored task. A set interval needs at least 2; use wilson.")
             if len({r["scored"] for r in rows}) > 1:
                 raise SystemExit(f"{model} has unequal runs per task. Rerun summarize_runs.py with --first N.")
             rates = [r["passes"] / r["scored"] for r in rows]
             centre, se, k = mean(rates), stdev(rates) / sqrt(len(rates)), rows[0]["scored"]
-            crit = t_critical_95(len(rows))
-            print(
-                f"{model}\t{len(rows)} tasks\tmean pass rate {centre:.1%}, SE {se:.1%}, 95% interval "
-                f"{max(0, centre - crit * se):.1%} to {min(1, centre + crit * se):.1%}\t"
-                f"pass@{k} {sum(r['passes'] > 0 for r in rows)} of {len(rows)}\t"
-                f"pass^{k} {sum(r['passes'] == r['scored'] for r in rows)} of {len(rows)}"
-            )
+            t = t_critical_95(len(rows))
+            print(f"{model}\t{len(rows)} tasks\tmean pass rate {centre:.1%}, SE {se:.1%}, 95% interval "
+                  f"{max(0, centre - t * se):.1%} to {min(1, centre + t * se):.1%}\t"
+                  f"pass@{k} {sum(r['passes'] > 0 for r in rows)} of {len(rows)}\t"
+                  f"pass^{k} {sum(r['passes'] == r['scored'] for r in rows)} of {len(rows)}")
         return
 
     if args.command == "wilson":

@@ -1,6 +1,6 @@
 # Harbor commands and measurement
 
-Commands, flags, reviewer dispatch, model runs, reruns, freezing, counting, and reporting for [SKILL.md](../SKILL.md). Verified on Harbor 0.18 with Docker and newer Harbor with Modal. Check your installed version with `harbor --version` and inspect flags with `--help`.
+Written for Harbor 0.27.0. Check yours with `harbor --version` and inspect flags with `--help`.
 
 Contents: [prerequisites](#check-prerequisites), [reviewer dispatch](#dispatch-a-reviewer), [reference solution](#run-the-reference-solution), [free checks](#run-free-checks), [solver shell](#open-a-solver-shell), [model runs](#run-models), [reruns](#rerun-infrastructure-failures), [regrades](#regrade-without-model-calls), [freezing](#freeze-the-task), [counting and reporting](#count-and-report), [all-0 or all-1 triage](#triage-all-0-or-all-1), and [cleanup](#clean-up-after-an-interrupted-run).
 
@@ -15,7 +15,7 @@ Use these placeholders in the commands below.
 Run these checks before Phase 1. Stop and report if a required check fails.
 
 ```bash
-harbor --version            # Harbor 0.18 or newer
+harbor --version            # 0.27.0
 docker info >/dev/null      # required for --env docker and local shells
 modal profile current       # required only when running --env modal
 ```
@@ -38,7 +38,7 @@ Fill every placeholder in the brief template before starting the reviewer.
 | `<cases folder>` | `work/<task-name>/reviews/hacker-<version>-cases/` |
 | `<job folder>` | Harbor job directory path, or `none` during Phase 2 |
 
-Start a fresh agent whose entire prompt is the filled brief. Use another model family when available, or start a fresh session with no shared context.
+Start a fresh agent whose entire prompt is the filled brief.
 
 ```bash
 codex exec "$(cat <filled brief>)"
@@ -70,11 +70,8 @@ docker rm -f <task-name>-ref
 
 ## Run free checks
 
-Commit `tasks/<task-name>/` on a work branch before every check and run. Harbor uploads files from disk, so a clean commit ties every result to a recorded SHA. `verify_task.py` checks git cleanliness strictly inside `tasks/<task-name>/`, so `work/<task-name>/` stays separate without breaking `doctor`.
-
 ```bash
 python $S/verify_task.py doctor $TASK --env docker
-cd $TASK && uvx pytest tests/ -q -p no:cacheprovider
 python $S/lint_task.py $TASK [--container-verifier]
 python $S/verify_task.py free $TASK --env docker \
 	--endpoint "$ENDPOINT" \
@@ -85,7 +82,7 @@ python $S/verify_task.py free $TASK --env docker \
 
 - Pass `--env modal` when running on Modal. Pass `--ek` with the service launcher only on Modal.
 - Pass `--container-verifier` when `tests/verifier.py` needs root privileges or container tools. `verify_task.py free --container-verifier` builds `tests/Dockerfile` and grades every stored case inside the verifier container automatically, including `hardening=False` on `exploit-*` cases.
-- `free` strips model and judge API keys, then runs preflight, oracle, empty agent, and agent install checks. Preflight tests both blocked network and endpoint access. Exit 0 means zero failed or skipped rows.
+- `free` strips model and judge API keys, then runs preflight, oracle, `nop`, and agent install checks. Preflight tests both blocked network and endpoint access. Exit 0 means zero failed or skipped rows.
 - Run the smoke command printed at the end of `summary.md` once to verify agent startup and endpoint reachability. Ignore the smoke reward.
 - Read `summary.md` first. Judge every trial by `result.json`, because Harbor exits 0 even when a trial errors. Ignore the verifier reward on the preflight trial.
 
@@ -116,7 +113,7 @@ Mount any extra `artifacts` from `task.toml` read-only at their container paths 
 
 ## Open a solver shell
 
-Build the solver image once, then start one long-lived container per reviewer. Set `<role>` to `auditor` or `hacker`, and give the `docker exec` line as `<shell command>`. Tell the auditor to keep scratch files in `/tmp`, because extra files in `/app/output` fail verification.
+Build the solver image once, then start one long-lived container per reviewer. Set `<role>` to `auditor` or `hacker`, and give the `docker exec` line as `<shell command>`.
 
 ```bash
 docker build -t <task-name> tasks/<task-name>/environment
@@ -194,11 +191,9 @@ RUN mkdir -p ~/.codex && printf '%s\n' 'model_provider = "endpoint"' '[model_pro
 	'name = "endpoint"' 'base_url = "<OPENAI_ENDPOINT value>"' 'env_key = "OPENAI_API_KEY"' > ~/.codex/config.toml
 ```
 
-Model pass-rate ordering never proves task validity on its own. Inspect unusually fast passes and hard-task surprises first. Weak models passing often reveal leaks, and zero passes across strong models often reveal setup or verifier bugs.
-
 ## Rerun infrastructure failures
 
-Resume a job while filtering out provider and runtime exceptions. Include both Harbor 0.18 and newer exception names so outages rerun cleanly.
+Resume a job while filtering out provider and runtime exceptions, so outages rerun cleanly.
 
 ```bash
 harbor job resume -p jobs/<job> \
@@ -210,13 +205,13 @@ If an agent exits 0 after stalling with no recorded exception, delete that trial
 
 ## Regrade without model calls
 
-On Harbor versions that provide `harbor job regrade`, rerun a modified verifier against stored trial artifacts without new model calls. Regrading requires separate verifier mode, declared `artifacts`, and the same task name.
+Rerun a modified verifier against stored trial artifacts without new model calls. Regrading requires separate verifier mode, declared `artifacts`, and the same task name.
 
 ```bash
 harbor job regrade jobs/<job> -p tasks/<task-name> --env modal --job-name regrade-<task-name>-<verifier-version>
 ```
 
-To test a shared second reading, copy `tasks/<task-name>` to a scratch folder with the same basename. Relax the copy's verifier to accept that reading, and regrade against the copy. If the runs pass, repair the ambiguous wording in Phase 4 and delete the scratch copy. On Harbor 0.18 without `harbor job regrade`, run `tests/verifier.py` directly on each trial's saved artifacts instead.
+To test a shared second reading, copy `tasks/<task-name>` to a scratch folder with the same basename. Relax the copy's verifier to accept that reading, and regrade against the copy. If the runs pass, repair the ambiguous wording in Phase 4 and delete the scratch copy.
 
 ## Freeze the task
 
@@ -233,7 +228,7 @@ docker buildx imagetools inspect <image>:<tag> | grep -m1 Digest
 
 ## Count and report
 
-Summarize trials and compute intervals with [summarize_runs.py](../scripts/summarize_runs.py) and [probe_odds.py](../scripts/probe_odds.py). Scores always reflect the model and agent CLI pair, never the model alone. Changing preinstalled packages changes the evaluation condition, so never compare scores across package changes without rerunning under the fixed setup.
+Summarize trials and compute intervals with [summarize_runs.py](../scripts/summarize_runs.py) and [probe_odds.py](../scripts/probe_odds.py). Scores always reflect the model and agent CLI pair, never the model alone.
 
 ```bash
 python $S/summarize_runs.py jobs/<job> [jobs/<job> ...] --first 10 --json > work/<task-name>/<model>.json
@@ -248,7 +243,7 @@ python $S/probe_odds.py rule --attempts 10 --keep <low> <high>
 - `wilson` computes one task's interval. `set` computes task-clustered mean pass rate, `pass@k`, and `pass^k` across two or more tasks. `paired` computes the interval of per-task differences between two single-model JSON summaries.
 - `rule` evaluates keep and kill rules before measuring.
 
-Write `work/<task-name>/report.md` with every item below. Base keep or release decisions on confidence intervals rather than bare point estimates.
+Write `work/<task-name>/report.md` with every item below.
 
 | Report item | Source |
 |---|---|
@@ -277,17 +272,13 @@ If every run scores 0, stop at the first step that explains the failure.
 4. Send the reader and auditor. A different valid answer proves the instruction or key is wrong.
 5. If every failure is a true capability failure, weaken one condition on a copy until at least one model passes.
 
-For a legacy task without `preflight/`, `tests/verifier.py`, or `tests/cases/`, skip `doctor`, `lint_task.py`, `free`, and step 3. Run `harbor run ... -a oracle` instead.
-
 ## Clean up after an interrupted run
 
-Harbor stops containers and sandboxes when trials finish normally. After an interrupted run, preview and stop leftover resources from that evidence folder. `verify_task.py cleanup` defaults to `--env docker`. Pass `--env modal` for Modal runs.
+Harbor stops containers and sandboxes when trials finish normally. After an interrupted run, preview and stop leftover resources from that evidence folder. `cleanup` reads Docker or Modal from the folder's `summary.json`.
 
 ```bash
 python $S/verify_task.py cleanup <evidence folder> --dry-run
 python $S/verify_task.py cleanup <evidence folder>
-python $S/verify_task.py cleanup <evidence folder> --env modal --dry-run
-python $S/verify_task.py cleanup <evidence folder> --env modal
 ```
 
 If `cleanup.log` records `"run_finished": false`, rerun `verify_task.py free` into a new evidence folder before trusting the task.

@@ -1,11 +1,11 @@
-"""Run a task's preflight/preflight_checks.sh in the solver container, with no model calls.
+"""Run a task's preflight/preflight_checks.sh in the solver's container, with no model calls.
 
-It runs as the solver user under the configured run network and saves output to agent/preflight.txt.
+It runs as the solver's user, under the network the run will use. It saves the output as agent/preflight.txt.
 
     PYTHONPATH=<skill folder>/scripts harbor run -p tasks/ -i <task-name> -a preflight_agent:PreflightAgent \\
         --ak script=$PWD/tasks/<task-name>/preflight/preflight_checks.sh --env docker -n 1 -y
 
-Harbor passes the task folder only to its built-in oracle agent, so the script path comes in as an agent kwarg.
+Harbor passes the task folder only to its own oracle agent, so the script path comes in as an agent argument.
 """
 from pathlib import Path
 

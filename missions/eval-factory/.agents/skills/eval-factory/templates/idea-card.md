@@ -1,6 +1,5 @@
 # <Task name>
 
-Keep the task record in `work/<task-name>/idea-card.md` across every version.
 Answer each section in a few plain sentences, or write "unknown".
 
 ## Claim

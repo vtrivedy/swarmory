@@ -4,18 +4,27 @@
 
 Build four Harbor tasks, each in its own folder under `tasks/`, that test this capability: **an agent finds the root
 cause of a failure when a second explanation fits the evidence almost as well.** Each task must separate a solver that
-has the capability from one that doesn't, and must test something the other tasks don't.
-
-To build evals for another capability, change the title, the bold line above, and the number of tasks.
+has the capability from one that doesn't, and must test something the other tasks don't. A task's control and abstain
+variants count as part of that task and share its issue.
 
 ## How to build them
 
-Follow `.agents/skills/eval-factory/SKILL.md` for each task, phase by phase. Copy its `templates/task/` to start a task
-in `tasks/<task-name>/`, and keep the task's idea card, reviews, and report in `work/<task-name>/`.
+Follow `.agents/skills/eval-factory/SKILL.md` for each task, phase by phase.
 
-Run Harbor through swarmory jobs, as `.agents/skills/running-harbor-jobs/SKILL.md` says. You hold no Modal token or
-model key: a job worker runs Harbor on your commit and posts the result on the issue you name. Where the eval-factory
-skill shows a `harbor run` or `verify_task.py free` command, use the job instead.
+Run Harbor through swarmory jobs, as `.agents/skills/running-harbor-jobs/SKILL.md` says. Run one job per variant
+folder. Steps in the eval-factory skill that need Docker, Modal, or a model key change in this mission.
+
+| Skill step | In this mission |
+|---|---|
+| Check prerequisites | Skip it. The first oracle job is the check. |
+| Reference solution and `verify_task.py free` | Task tests, `lint_task.py`, then oracle and nop jobs. Take `tests/cases/reference/` from the oracle job's artifacts. |
+| `harbor run` | `swarmory job harbor PATH --agent claude-code --model M --attempts N`, or `--agent codex` |
+| Rerun infrastructure failures | Rerun that task alone as a new job. |
+| Regrade | Run `tests/verifier.py` on each trial's artifacts from `swarmory get`. |
+| Preflight and leak search | Commit an executable `preflight/run` that runs `preflight_checks.sh` and the leak `find`. Run `--agent tasks/<name>/preflight --model M` and read `run.log`. This route is untested. |
+| Solver shell | The auditor and the hacker read the task's committed files. They test behavior in the image with committed harness jobs, `--agent <folder> --model M`. |
+| Model judge | Not available, because a job refuses a verifier with network. Grade with code. |
+| Freeze digests | Pin versions in the Dockerfiles and skip digests. |
 
 `create-task` and `rewardkit` are Harbor's own skills, for reference on the task format and on Reward Kit verifiers.
 
@@ -23,13 +32,16 @@ skill shows a `harbor run` or `verify_task.py free` command, use the job instead
 
 - Each task's own tests pass: `cd tasks/<name> && harbor-python -m pytest tests -q -p no:cacheprovider`.
 - `swarmory job harbor tasks/<name> --agent oracle --to <its issue>` passes, and `--agent nop` fails.
-- Models run as jobs too, such as `--agent claude-code --model claude-opus-5-5 --attempts 5 --to <its issue>`.
+- Models run as jobs too, such as `--agent claude-code --model claude-opus-5-5 --attempts 10 --to <its issue>`.
 
-A task is done when it is on main, it passed every phase gate in the eval-factory skill through Phase 5, and someone
-other than its builder tried to break it. The strongest model you can run must fail some runs, for the reason the
-task's claim names. A task every model passes is a draft: make it harder and log each version in its idea card.
+A task is done when it is on main and passed every phase gate in the eval-factory skill through Phase 5. The target
+model must fail some runs, for the reason the claim names. If it passes every run, follow the skill's raise difficulty
+section.
 
 ## How the work divides
 
 Each task is one issue with one builder. Reviewing is separate work: critic, reader, auditor, and hacker each take a
-task they didn't build, using the briefs in the eval-factory skill's `templates/`, and report on the task's issue.
+task they didn't build, using the briefs in the eval-factory skill's `templates/`. The reviewer fills the brief, writes
+the report to `work/<task-name>/reviews/<role>-<version>.md`, puts any auditor answer in
+`work/<task-name>/reviews/auditor-<version>-answer/output/`, and posts the verdict line on the task's issue. The builder
+skips the skill's reviewer dispatch.
