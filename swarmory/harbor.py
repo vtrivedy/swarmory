@@ -22,12 +22,24 @@ import urllib.parse
 from pathlib import Path
 
 VERSION = "harbor[modal]==0.27.0"
-GATEWAY = {"claude-code": ("/anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),  # each coding agent's route
-           "codex": ("/openai/v1", "OPENAI_BASE_URL", "OPENAI_API_KEY")}             # and the settings it reads
-AGENTS = ("oracle", "nop", *GATEWAY)  # Harbor's model-free agents, and the coding agents
+# The gateway's routes, as every agent that takes a model gets them: each route, the base-URL settings agents read
+# for it, and the key setting, which carries the job's spend token
+GATEWAY = (("/anthropic", ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_BASE"), "ANTHROPIC_API_KEY"),
+           ("/openai/v1", ("OPENAI_BASE_URL", "OPENAI_API_BASE"), "OPENAI_API_KEY"),
+           ("/gemini", ("GOOGLE_GEMINI_BASE_URL",), "GEMINI_API_KEY"))
+MODEL_FREE = ("oracle", "nop")  # Harbor's agents that take no model
+NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")  # a Harbor agent's name, such as claude-code or terminus-2
+OPTION = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}=.{0,2000}", re.S)  # one --ak, --ae or --ek: KEY=VALUE
+# Harbor's environment options a job may set. The rest could mount a credential (secrets, registry_secret, volumes) or
+# move the sandboxes out of the app and tags swarmory ends them by (app_name, labels, auto_labels).
+ENV_OPTIONS = ("keepalive", "region", "modal_vm_runtime", "sandbox_timeout_secs", "sandbox_idle_timeout_secs",
+               "dind_image", "auto_mounting")
+TIMEOUTS = ("timeout_multiplier", "agent_timeout_multiplier", "verifier_timeout_multiplier",
+            "agent_setup_timeout_multiplier", "environment_build_timeout_multiplier")
 ADAPTER = Path(__file__).parent / "worker" / "harbor_adapter"  # Harbor's PYTHONPATH for a harness: this folder alone
 COMPOSE = "docker-compose.yaml"
-CONCURRENT = 8  # the most trials one job runs at once
+CONCURRENT = 8  # the trials one job runs at once unless it asks for another number
+MOST_CONCURRENT = 64
 RETRY = "EnvironmentStartTimeoutError"  # a trial whose sandbox did not start is run once more
 APP = "__harbor__"  # the Modal app Harbor starts trial and verifier sandboxes in
 TAG = "swarmory.job"  # the Modal tag Harbor puts on each of a job's sandboxes as it starts it: the job's claim's tag
@@ -106,30 +118,65 @@ def trials(folder: Path) -> list:
     return out
 
 
+def options(params: dict, flag: str, allowed=None, taken=()) -> list:
+    """A job's repeated --ak, --ae or --ek values: KEY=VALUE strings, each with a literal value. Harbor fills a ${...}
+    from the job worker's environment, which holds its credentials."""
+    values = params.get(flag) or []
+    values = [values] if isinstance(values, str) else values
+    if not isinstance(values, list) or not all(isinstance(v, str) and OPTION.fullmatch(v) for v in values):
+        raise ValueError(f"--{flag} takes KEY=VALUE, once per option")
+    for v in values:
+        key = v.split("=", 1)[0]
+        if "${" in v:
+            raise ValueError(f"--{flag} {key}: a value may not hold ${{...}}, which Harbor fills from the job "
+                             "worker's credentials. Write the value itself.")
+        if allowed is not None and key not in allowed:
+            raise ValueError(f"--{flag} {key} is not an environment option a job may set: {', '.join(allowed)}")
+        if key in taken:
+            raise ValueError(f"--{flag} {key} is set by swarmory: {', '.join(taken)}")
+    return values
+
+
+def number(params: dict, key: str, kind, low, high):
+    value = params.get(key)
+    if value is None:
+        return None
+    try:
+        value = kind(value)
+    except (TypeError, ValueError):
+        value = None
+    if isinstance(value, bool) or value is None or not low <= value <= high:
+        raise ValueError(f"{key} is a number from {low} to {high}")
+    return value
+
+
 def check(params: dict, inputs, url: str, harness=None) -> dict:
     """On the server, before the job is queued: the parameters as the job records them, or a ValueError that
     says what is wrong with them or with the folder. `url` is the server's address. `harness` is the committed
-    folder the agent names, when it names one rather than a built-in agent."""
-    extra = params.keys() - {"agent", "model", "attempts", "env"}
+    folder the agent names, when it names one rather than one of Harbor's agents."""
+    extra = params.keys() - {"agent", "model", "attempts", "env", "concurrent", "ak", "ae", "ek", *TIMEOUTS}
     if extra:
-        raise ValueError(f"a harbor job takes --agent, --model, --attempts and --env, not {', '.join(sorted(extra))}")
+        raise ValueError(f"a harbor job takes --agent, --model, --attempts, --env, --concurrent, --ak, --ae, --ek and "
+                         f"--{', --'.join(t.replace('_', '-') for t in TIMEOUTS)}, not {', '.join(sorted(extra))}")
     if params.get("env") not in (None, *ENVS):
         raise ValueError("env is docker, to run trials on the server's machine, or modal")
-    agent, model, attempts = params.get("agent"), params.get("model"), params.get("attempts", 1)
-    if agent not in AGENTS and harness is None:
-        raise ValueError(f"agent is one of {', '.join(AGENTS)}, or a committed folder in the repo (not the repo "
-                         "itself) that holds an executable `run`")
+    agent, model = params.get("agent"), params.get("model")
+    if harness is None and not (isinstance(agent, str) and NAME.fullmatch(agent)):
+        raise ValueError("agent is one of Harbor's agents, such as oracle, nop, claude-code, codex, gemini-cli or "
+                         "terminus-2, or a committed folder in the repo (not the repo itself) that holds an "
+                         "executable `run`")
     if harness is not None and "run" not in harness.names():
         raise ValueError(f"the agent folder {agent} has no `run`: the executable each trial runs")
-    modeled = agent in GATEWAY or harness is not None
-    if (model is None) == modeled or model is not None and not (
+    modeled = agent not in MODEL_FREE
+    if modeled != (model is not None) or model is not None and not (
             isinstance(model, str) and len(model) <= 100 and re.fullmatch(r"[\w.:/@-]+", model)):
-        raise ValueError("model is a model name, which claude-code, codex and a harness folder need and oracle and "
-                         "nop do not take")
-    if isinstance(attempts, str) and attempts.isdigit():
-        attempts = int(attempts)
-    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
-        raise ValueError("attempts is a whole number from 1")
+        raise ValueError("model is a model name, which every agent but oracle and nop needs")
+    attempts = number(params, "attempts", int, 1, 1000) or 1
+    concurrent = number(params, "concurrent", int, 1, MOST_CONCURRENT)
+    timeouts = {t: number(params, t, float, 0.1, 100) for t in TIMEOUTS if params.get(t) is not None}
+    ak = options(params, "ak", taken=("dir",) if harness is not None else ())
+    ae = options(params, "ae", taken=tuple(k for _, bases, key in GATEWAY for k in (*bases, key)))
+    ek = options(params, "ek", allowed=ENV_OPTIONS)
     # with no env, a local server's trials run in Docker, so only trials sent to Modal cannot reach it
     if modeled and params.get("env") == "modal" and urllib.parse.urlsplit(url).hostname in LOOPBACK:
         raise ValueError(LOCAL)
@@ -150,7 +197,8 @@ def check(params: dict, inputs, url: str, harness=None) -> dict:
             raise ValueError(f'{name} is not sealed. A job\'s trials get no network but the model gateway: set '
                              f'[environment] network_mode = "{SEALED}", and take network_mode, allowed_hosts '
                              "and allow_internet out of every other table.")
-    return {"agent": agent, "model": model, "attempts": attempts, "env": params.get("env"), "tasks": len(tasks)}
+    return {"agent": agent, "model": model, "attempts": attempts, "env": params.get("env"), "concurrent": concurrent,
+            **timeouts, "ak": ak, "ae": ae, "ek": ek, "tasks": len(tasks)}
 
 
 def where(params: dict, url: str) -> str:
@@ -178,7 +226,8 @@ def command(job: dict, task: Path, out: Path, llm: str, key: str, harness: Path 
     folder, if it has one. Trials of a coding agent or a harness reach only that gateway: a harness gets both its
     routes."""
     params, to = job["params"], urllib.parse.urlsplit(llm)
-    on, trials = where(params, llm), min(params["attempts"] * params["tasks"], CONCURRENT)
+    on = where(params, llm)
+    trials = params.get("concurrent") or min(params["attempts"] * params["tasks"], CONCURRENT)
     if on == "docker" and to.hostname in LOOPBACK:  # a container's own 127.0.0.1 is itself, not this machine
         to = to._replace(netloc=FROM_DOCKER + (f":{to.port}" if to.port else ""))
     argv = [*shlex.split(os.environ.get("HARBOR") or ""), "run", "-p", str(task), "--env", on, "-a",
@@ -188,15 +237,22 @@ def command(job: dict, task: Path, out: Path, llm: str, key: str, harness: Path 
         argv[:0] = ["uvx", "--from", VERSION, "harbor"]
     if params["model"]:
         argv += ["-m", params["model"]]
+    for t in TIMEOUTS:
+        if params.get(t) is not None:
+            argv += ["--" + t.replace("_", "-"), str(params[t])]
+    for flag in ("ak", "ae", "ek"):
+        for value in params.get(flag) or ():
+            argv += ["--" + flag, value]
     if on == "modal":
         argv += ["--ek", "labels=" + json.dumps({TAG: job["tag"]})]
     env = {**{k: os.environ[k] for k in ("PATH", "HOME", *MODAL) if k in os.environ}, "SWARMORY_JOB_KEY": ""}
     if harness:
         argv += ["--ak", f"dir={harness}"]
         env["PYTHONPATH"] = str(ADAPTER)
-    routes = GATEWAY.values() if harness else [GATEWAY[params["agent"]]] if params["agent"] in GATEWAY else []
-    for route, base, name in routes:
-        argv += ["--ae", f"{base}={to.geturl()}{route}", "--ae", f"{name}=${{SWARMORY_JOB_KEY}}"]
+    routes = GATEWAY if params["agent"] not in MODEL_FREE else ()
+    for route, bases, name in routes:
+        argv += [a for base in bases for a in ("--ae", f"{base}={to.geturl()}{route}")]
+        argv += ["--ae", f"{name}=${{SWARMORY_JOB_KEY}}"]
     if routes:
         argv += ["--allow-environment-host", to.hostname]
         env["SWARMORY_JOB_KEY"] = key

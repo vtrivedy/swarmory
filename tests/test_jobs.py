@@ -214,15 +214,38 @@ def test_an_agent_folder_is_a_committed_harness_with_a_run_and_no_task_has_a_com
                    {"agent": "../agents/h", "model": "m"}, {"agent": "agents/h"}):
         with pytest.raises(ValueError):
             jobs.submit("ada", {**ask, "params": params})
-    for agent in ("claude", "", "."):  # a misspelled built-in agent hears which there are
-        with pytest.raises(ValueError, match="one of oracle, nop, claude-code, codex"):
+    for agent in ("", ".", "Claude Code"):  # not a name Harbor could have
+        with pytest.raises(ValueError, match="one of Harbor's agents"):
             jobs.submit("ada", {**ask, "params": {"agent": agent, "model": "m"}})
     with pytest.raises(ValueError, match="docker-compose.yaml"):
         jobs.submit("ada", {**ask, "path": "tasks", "params": {"agent": "oracle"}})
     assert jobs.submit("ada", {**ask, "params": {"agent": "oracle"}})["job"]["harness"] is None
 
 
-def test_a_harness_runs_in_harbor_through_the_adapter_alone_with_both_gateway_routes(jobs_run, tmp_path):
+def test_any_harbor_agent_takes_its_options_and_a_job_still_keeps_credentials_and_its_sandboxes_its_own(tmp_path):
+    from swarmory import harbor
+    task(tmp_path)
+    head = commit(tmp_path, {"README.md": "tasks\n"})
+    t, jobs = queue(tmp_path)
+    ask = {"commit": head, "path": "tasks/hello"}
+    params = {"agent": "terminus-2", "model": "anthropic/claude-haiku-5-5", "attempts": "3", "concurrent": "16",
+              "agent_timeout_multiplier": "2.5", "ak": ["max_turns=40"], "ae": ["DEBUG=1"],
+              "ek": ['keepalive=["/usr/local/sbin/start-services"]']}
+    job = jobs.submit("ada", {**ask, "params": params})["job"]
+    argv = harbor.command({**job, "tag": "t"}, tmp_path, tmp_path / "out", "https://s.example/llm", "k")[0]
+    joined = " ".join(argv)
+    for flag in ("-a terminus-2", "-n 16", "--agent-timeout-multiplier 2.5", "--ak max_turns=40", "--ae DEBUG=1",
+                 '--ek keepalive=["/usr/local/sbin/start-services"]', "--ae GEMINI_API_KEY=${SWARMORY_JOB_KEY}"):
+        assert flag in joined, flag
+    for bad in ({"ae": ["X=${MODAL_TOKEN_SECRET}"]}, {"ae": ["ANTHROPIC_API_KEY=mine"]},
+                {"ae": ["OPENAI_BASE_URL=https://elsewhere"]}, {"ek": ["secrets=[\"keys\"]"]},
+                {"ek": ["labels={}"]}, {"ek": ["volumes={}"]}, {"ak": ["novalue"]}, {"concurrent": "65"},
+                {"timeout_multiplier": "0"}, {"agent": "oracle", "model": "m"}, {"agent": "gemini-cli", "model": None}):
+        with pytest.raises(ValueError):
+            jobs.submit("ada", {**ask, "params": {**params, **bad}})
+
+
+def test_a_harness_runs_in_harbor_through_the_adapter_alone_with_every_gateway_route(jobs_run, tmp_path):
     from swarmory import harbor
     folder = task(tmp_path)
     commit(tmp_path, {"agents/h/run": RUN})
@@ -247,9 +270,13 @@ def test_a_harness_runs_in_harbor_through_the_adapter_alone_with_both_gateway_ro
         "PATH", "HOME", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "SWARMORY_JOB_KEY", "PYTHONPATH"}
     gateway = jobs_run.url.replace("127.0.0.1", "host.docker.internal") + "/llm"
     assert a[a.index("--ae"):] == ["--ae", f"ANTHROPIC_BASE_URL={gateway}/anthropic",
+                                   "--ae", f"ANTHROPIC_API_BASE={gateway}/anthropic",
                                    "--ae", "ANTHROPIC_API_KEY=${SWARMORY_JOB_KEY}",
                                    "--ae", f"OPENAI_BASE_URL={gateway}/openai/v1",
+                                   "--ae", f"OPENAI_API_BASE={gateway}/openai/v1",
                                    "--ae", "OPENAI_API_KEY=${SWARMORY_JOB_KEY}",
+                                   "--ae", f"GOOGLE_GEMINI_BASE_URL={gateway}/gemini",
+                                   "--ae", "GEMINI_API_KEY=${SWARMORY_JOB_KEY}",
                                    "--allow-environment-host", "host.docker.internal"]
     assert seen["env"]["SWARMORY_JOB_KEY"] == claimed["spend"]
 
@@ -311,9 +338,11 @@ def test_harbor_sees_only_its_listed_environment_and_the_committed_folder(jobs_r
     for secret in (claimed["token"], jobs_run.tokens["vivek"], "real-key", "not-for-harbor"):
         assert secret not in json.dumps(seen), "Harbor got a token or a key it has no use for"
     gateway = jobs_run.url.replace("127.0.0.1", "host.docker.internal") + "/llm/anthropic"
-    assert seen["argv"][-8:] == ["-m", "claude-haiku-5-5", "--ae", f"ANTHROPIC_BASE_URL={gateway}",
-                                 "--ae", "ANTHROPIC_API_KEY=${SWARMORY_JOB_KEY}", "--allow-environment-host",
-                                 "host.docker.internal"], "a local server's trials run in Docker, and reach it"
+    a = seen["argv"]
+    assert a[a.index("-m"):a.index("-m") + 2] == ["-m", "claude-haiku-5-5"]
+    assert f"ANTHROPIC_BASE_URL={gateway}" in a and "ANTHROPIC_API_KEY=${SWARMORY_JOB_KEY}" in a
+    assert a[-2:] == ["--allow-environment-host", "host.docker.internal"], \
+        "a local server's trials run in Docker, and reach it"
     job = jobs_run("ada", "job-show", id="j1")["job"]
     assert job["status"] == "done" and job["outcome"]["headline"] == "1 passed, 0 failed, 1 errored of 2"
 
