@@ -18,7 +18,7 @@ folder. Steps in the eval-factory skill that need Docker, Modal, or a model key 
 |---|---|
 | Check prerequisites | Skip it. The first oracle job is the check. |
 | Reference solution and `verify_task.py free` | Task tests, `lint_task.py`, then oracle and nop jobs. Take `tests/cases/reference/` from the oracle job's artifacts. |
-| `harbor run` | `swarmory job harbor PATH --agent claude-code --model M --attempts N`, or `--agent codex` |
+| `harbor run` | `swarmory job harbor PATH --agent A --model M --attempts N`, with any Harbor agent or a harness folder, and Harbor's options such as `--ek keepalive=...` for mock services |
 | Rerun infrastructure failures | Rerun that task alone as a new job. |
 | Regrade | Run `tests/verifier.py` on each trial's artifacts from `swarmory get`. |
 | Preflight and leak search | Commit an executable `preflight/run` that runs `preflight_checks.sh` and the leak `find`. Run `--agent tasks/<name>/preflight --model M` and read `run.log`. This route is untested. |

@@ -19,9 +19,15 @@ swarmory run.
    the network, or a verifier that calls a model, can't run as a swarmory job.
 3. Commit it. `swarmory job harbor` pushes your HEAD commit to a job ref on the server, not to main, so the job
    needs no push of its own. Push your work to main as usual, so the team has it.
-4. Run `swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal] --to WHERE`.
-5. The server checks the job. The agent is oracle, nop, claude-code or codex, or a custom harness folder (see
-   below); all but oracle and nop need `--model`. Every task.toml must be sealed, and the folder may hold no
+4. Run `swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal] --to WHERE`. Add
+   Harbor's options as needed: `--concurrent N`, `--ak KEY=VALUE` (agent options), `--ae KEY=VALUE` (agent
+   environment), `--ek KEY=VALUE` (environment options such as `keepalive`), and `--timeout-multiplier X` or its
+   `--agent-`, `--verifier-`, `--agent-setup-` and `--environment-build-` forms. Repeat `--ak`, `--ae` and `--ek`.
+5. The server checks the job. The agent is any of Harbor's agents (`oracle`, `nop`, `claude-code`, `codex`,
+   `gemini-cli`, `terminus-2`, and the rest) or a custom harness folder (see below); all but oracle and nop need
+   `--model`, and their model calls go through the run's gateway. No option value may hold `${...}`, `--ae` may not
+   set the gateway's URLs or keys, and `--ek` takes only `keepalive`, `region`, `modal_vm_runtime`,
+   `sandbox_timeout_secs`, `sandbox_idle_timeout_secs`, `dind_image` and `auto_mounting`. Every task.toml must be sealed, and the folder may hold no
    `docker-compose.yaml`, in `environment/` or `tests/`, or the job is refused with the reason. The server records
    the folder's git tree, and the harness folder's, so the result names exactly what ran.
 6. Within a few seconds a job worker starts in its own sandbox. It fetches the committed folder and runs Harbor on
@@ -109,7 +115,8 @@ Commit `run` executable (`chmod +x run` before `git add`).
 ## Commands
 
 ```
-swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal]
+swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal] [--concurrent N]
+                         [--ak KEY=VALUE]... [--ae KEY=VALUE]... [--ek KEY=VALUE]... [--timeout-multiplier X]
                          [--budget USD] [--hours H] [--to WHERE]
 swarmory job list [--mine]     the run's jobs, newest first
 swarmory job show ID           each trial's reward and error

@@ -119,8 +119,9 @@ class Jobs:
                 "If the mission has the running-harbor-jobs skill, read it before you build a task: it says what a "
                 "job accepts.\n\n"
                 "1. Finish the task folder and commit it.\n"
-                "2. Run `swarmory job harbor PATH --agent AGENT [--model MODEL] [--to ISSUE]`. It pushes your HEAD to "
-                "a job ref, not to main, and queues the job.\n"
+                "2. Run `swarmory job harbor PATH --agent AGENT [--model MODEL] [--to ISSUE]`. AGENT is any of Harbor's "
+                "agents or a committed harness folder. `swarmory help` lists Harbor's options a job takes. It pushes "
+                "your HEAD to a job ref, not to main, and queues the job.\n"
                 f"3. The server runs Harbor {where}. The result comes as a message in general, or on ISSUE, with the "
                 "job's files attached.\n\n"
                 "You never run `harbor`, `docker` or `modal` yourself. `swarmory help` lists the job commands.\n\n")
@@ -204,7 +205,7 @@ class Jobs:
             raise ValueError("params is an object")
         commit, path, tree = self.provenance(req.get("commit"), req.get("path"))
         agent, harness = params.get("agent"), None
-        if isinstance(agent, str) and agent not in harbor.AGENTS:  # a folder: a harness
+        if isinstance(agent, str) and agent not in harbor.MODEL_FREE:  # a folder, if the commit has one: a harness
             with contextlib.suppress(ValueError):  # not a folder: harbor.check names the agents there are
                 _, folder, own = self.provenance(commit, agent)
                 if folder != ".":

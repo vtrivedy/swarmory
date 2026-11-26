@@ -28,7 +28,7 @@ import urllib.request
 from pathlib import Path
 
 from swarmory import HOLD, HOURS, PORT, POST_BUFFER, TRACE_MOST, harness
-from swarmory.harbor import AGENTS
+from swarmory.harbor import MODEL_FREE
 
 USAGE = f"""\
 swarmory                                 who you are, what's unread, your issues, the run
@@ -48,19 +48,26 @@ swarmory issue ID                        one issue and its whole thread
 swarmory new TITLE... [--body TEXT|-] [--assign a,b]  me works there too
 swarmory assign ID +ada -grace ... [--if-unassigned]  +me works; --if-unassigned refuses if already assigned
 swarmory move ID todo|doing|done|canceled [NOTE...]
-swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal]
+swarmory job harbor PATH --agent A [--model M] [--attempts N] [--env docker|modal] [--concurrent N]
+             [--ak KEY=VALUE]... [--ae KEY=VALUE]... [--ek KEY=VALUE]... [--timeout-multiplier X]
              [--hours H] [--budget USD] [--to WHERE]
                                          have the run do a Harbor job on the folder PATH as your HEAD commit has it: a
-                                         task, or a folder of tasks. A is oracle, nop, claude-code or codex, or a
-                                         folder with an executable `run` (a custom harness); all but oracle and nop
-                                         need --model, which those two don't take. --attempts runs each task N times
-                                         (by default 1). --env is where trials run: docker, on the server's machine (a
-                                         local server's default), or modal (any other server's). PATH, and A if it is a
-                                         folder, must have no uncommitted changes: `swarmory job` pushes HEAD and sends
-                                         the commit, so the result names exactly what ran. The result comes as a message in WHERE (default
-                                         general), with the job's artifacts attached. --hours is the longest the job may
-                                         take ({HOURS}, and never past the run's end); --budget stops its model calls
-                                         once they cost USD
+                                         task, or a folder of tasks. A is any of Harbor's agents (oracle, nop,
+                                         claude-code, codex, gemini-cli, terminus-2, ...) or a folder with an
+                                         executable `run` (a custom harness, which gets the task's MCP servers). All
+                                         but oracle and nop need --model; their model calls go through the run's
+                                         gateway. --attempts runs each task N times (default 1), --concurrent runs N
+                                         trials at once (default up to 8). --ak and --ae pass Harbor agent options and
+                                         agent environment variables, --ek environment options such as keepalive, and
+                                         --timeout-multiplier and its --agent-, --verifier-, --agent-setup- and
+                                         --environment-build- forms scale the task's timeouts. --env is where trials
+                                         run: docker, on the server's machine (a local server's default), or modal.
+                                         Trials have no network but the gateway, and no value may hold ${{...}}. PATH,
+                                         and A if it is a folder, must have no uncommitted changes: `swarmory job`
+                                         pushes HEAD and sends the commit, so the result names exactly what ran. The
+                                         result comes as a message in WHERE (default general), with the job's
+                                         artifacts attached. --hours is the longest the job may take ({HOURS}, and
+                                         never past the run's end); --budget stops its model calls once they cost USD
 swarmory job list [--mine]  ·  swarmory job show ID  ·  swarmory job cancel ID
 swarmory results PATH                    every job in this run on exactly this folder content, with its result
 swarmory spend                           what the run's model calls have cost, by member, and the run's budget
@@ -146,7 +153,11 @@ def parse(cmd, args):
         elif a.startswith("--") and cmd == "job" and len(a) > 2:
             if not args:
                 usage(a + " needs a value")
-            opts.setdefault("params", {})[a[2:].replace("-", "_")] = args.pop(0)
+            key, value = a[2:].replace("-", "_"), args.pop(0)
+            if key in ("ak", "ae", "ek"):  # Harbor's repeated KEY=VALUE options
+                opts.setdefault("params", {}).setdefault(key, []).append(value)
+            else:
+                opts.setdefault("params", {})[key] = value
         elif a.startswith("--"):
             usage("`swarmory %s` has no option %s" % (cmd, a))
         else:
@@ -358,7 +369,7 @@ def job(pos, opts):
         path, params, root = sent(arg), dict(opts.get("params", {})), git(arg, "rev-parse", "--show-toplevel")
         agent = params.get("agent")
         # a harness folder: its path from here, or from the repo's root
-        for folder in (agent, os.path.join(root.strip(), agent)) if agent and agent not in AGENTS else ():
+        for folder in (agent, os.path.join(root.strip(), agent)) if agent and agent not in MODEL_FREE else ():
             if os.path.isdir(folder):
                 if git(folder, "rev-parse", "--show-toplevel") != root:
                     fail("--agent %s is not a folder of the repo that has %s" % (agent, arg))
