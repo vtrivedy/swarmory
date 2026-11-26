@@ -135,6 +135,9 @@ class Team:
         if t == "member":
             self.members[ev["member"]["id"]] = ev["member"]
             self.digests.update([ev["member"]["token_sha256"]] if ev["member"].get("token_sha256") else [])
+        elif t == "removed":  # the operator took the member off the team: its token opens nothing now
+            self.members[ev["member"]]["removed"] = ev["at"]
+            self.members[ev["member"]].pop("token_sha256", None)
         elif t == "worker":  # a new worker for a member, with the only token that opens the member now
             self.members[ev["member"]]["token_sha256"] = ev["token_sha256"]
             self.digests.add(ev["token_sha256"])
@@ -231,6 +234,8 @@ class Team:
             x = who if n.lower() == "me" else self.member(n)
             if not x:
                 raise ValueError(f"{n} is not a member; see `swarmory who`")
+            if self.members[x].get("removed"):
+                raise ValueError(f"{n} has left the team; see `swarmory who`")
             if x not in out:
                 out.append(x)
         return out
@@ -277,7 +282,7 @@ class Team:
         issue = self.board.get(conv)
         here = self.channels[conv]["members"] if "channel" in mentions and conv in self.channels else ()
         replied = self.messages[reply_to]["author"] if reply_to else None
-        return [x for x in self.members if x != author and (
+        return [x for x, m in self.members.items() if x != author and not m.get("removed") and (
             x in mentions or "all" in mentions or x in here or x == replied or issue and x in issue["subscribers"])]
 
     def post(self, conv: str, author: str, text: str, reply_to, nonce, change: dict = None, files=(),
@@ -324,7 +329,8 @@ class Team:
     def member_view(self, x: str) -> dict:
         m = self.members[x]
         view = {"id": m["id"], "name": m["name"], "kind": m["kind"]}
-        return {**view, "operator": True} if m.get("operator") else view
+        return {**view, **({"operator": True} if m.get("operator") else {}),
+                **({"removed": True} if m.get("removed") else {})}
 
     def mark_read(self, x: str, shown: list):
         """Read marks for the messages shown to x. A conversation's mark moves only up to its first unread message
@@ -505,6 +511,39 @@ class Team:
                 return {"issue": self.issue_view(hit)}
             i = self.find_issue(req)
             return self.change({"type": "move", "id": i, "status": status, "note": note, "by": who, "nonce": nonce})
+
+    # ---- the operator's changes to the team, which the server posts in general
+
+    def announce(self, text: str, nonce: str = None) -> bool:
+        """Posts `text` in general as the server. With a nonce, only once in the run: False if it was posted before."""
+        with self.lock:
+            if self.seen(SYSTEM, nonce, "message"):
+                return False
+            self.post("general", SYSTEM, text, None, nonce)
+            return True
+
+    def add(self, members: list):
+        """New agents, each in general."""
+        with self.lock:
+            for m in members:
+                self.append({"type": "member", "member": m})
+                self.append({"type": "join", "id": "general", "member": m["id"]})
+
+    def remove(self, ids: list) -> list:
+        """Takes members off the team, and off the issues assigned to them, which go back to todo when no one is left
+        on them: (the issue, its title) of each."""
+        freed = []
+        with self.lock:
+            for x in ids:
+                self.append({"type": "removed", "member": x})
+                for i in self.board.values():
+                    if x in i["assignees"] and i["status"] in ("todo", "doing"):
+                        self.change({"type": "assign", "id": i["id"], "add": [], "remove": [x], "by": SYSTEM})
+                        if i["status"] == "doing" and not i["assignees"]:
+                            self.change({"type": "move", "id": i["id"], "status": "todo", "by": SYSTEM,
+                                         "note": f"{self.members[x]['name']} left the team"})
+                        freed.append((i["id"], i["title"]))
+        return freed
 
     def pushed(self, who: str, updates: list):
         """A git push's ref updates, as server.py read them: an event each, for no one."""

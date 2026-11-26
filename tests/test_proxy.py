@@ -291,6 +291,11 @@ def test_a_provider_limit_on_a_members_call_is_noted_until_it_resets_and_spend_r
     iso = {"error": {"type": "usage_limit_reached", "resets_at": "2026-11-25T10:00:00Z"}}
     assert call("/openai/v1/responses", {"model": "gpt-6.1-sol", "limit": {"status": 429, "error": iso}}, who="di")[0] == 429
     assert reported("di") == pytest.approx(now + 60, abs=2), "an ISO resets_at was read as seconds"
+    down = {"type": "error", "error": {"type": "api_error", "message": "internal"}}
+    assert call("/anthropic/v1/messages", {**req, "limit": {"status": 500, "error": down}}, who="gu")[0] == 500
+    assert reported("gu") == pytest.approx(now + 60, abs=2), "a provider's 500 didn't pause the member"
+    assert call("/anthropic/v1/messages", {**req, "limit": {"status": 400, "error": down}}, who="hy")[0] == 400
+    assert reported("hy") is None, "a refused request paused the member, whose conversation may be at fault"
     endless = {"status": 429, "headers": {"retry-after": "inf"}, "error": overloaded}
     assert call("/anthropic/v1/messages", {**req, "limit": endless}, who="fy")[0] == 429
     assert reported("fy") == pytest.approx(now + 60, abs=2)

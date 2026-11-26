@@ -111,6 +111,11 @@ class Supervisor:
                     continue
                 try:
                     now = time.time()
+                    for run in self.runs.loaded():
+                        try:
+                            run.warn(now)
+                        except Exception:
+                            traceback.print_exc()
                     for step in plan([w for run in self.runs.loaded() for w in run.wanted(now)], live, now,
                                      self.restart):
                         try:
@@ -160,7 +165,8 @@ class Supervisor:
                 return
             brief, skills = mission(run.repo)
             (work.parent / "prompt.md").write_text(prompt(run.config, run.team.members[wid], brief, skills,
-                                                          self.backend.kind, self.hosts(run), run.jobs.guide()))
+                                                          self.backend.kind, self.hosts(run), run.jobs.guide(),
+                                                          run.lead() == wid))
             token = secrets.token_hex(16)
             run.team.worker(wid, sha(token))  # logged before the worker gets it
             self.backend.start(self.agent(run, run.team.members[wid], token))

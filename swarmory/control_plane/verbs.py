@@ -15,7 +15,7 @@ from swarmory import HOLD, HOURS
 from .jobs import described, git
 from .policy import TABLE, sha
 from .proxy import money
-from .runs import new_run, state, view_token
+from .runs import agent_ids, agents, new_run, state, view_token
 from .team import IDLE, STATUSES, NotFound
 
 LOOK = {"readOnlyHint": True}
@@ -96,8 +96,9 @@ def me_text(r: dict, req: dict) -> str:
 
 
 def who_text(r: dict, req: dict) -> str:
-    people = ["%-10s %s, %s%s" % (m["id"], m["name"], "an agent" if m["kind"] == "agent" else "a person",
-                                  ", operator" if m.get("operator") else "") for m in r["members"]]
+    people = ["%-10s %s, %s%s%s" % (m["id"], m["name"], "an agent" if m["kind"] == "agent" else "a person",
+                                    ", operator" if m.get("operator") else "",
+                                    ", left the team" if m.get("removed") else "") for m in r["members"]]
     return "\n".join(people + [chan(c) for c in r["channels"]])
 
 
@@ -327,7 +328,7 @@ def start(server, req: dict, token: str) -> dict:
 
 def listing(server, req: dict, token: str) -> dict:
     runs = [{"run": rid, "mission": c["mission"], "state": state(c), "created": c["created"],
-             "deadline": c["deadline"], "agents": sum(m["kind"] == "agent" for m in c["members"])}
+             "deadline": c["deadline"], "agents": len(agent_ids(c))}
             for rid, c in server.runs.configs()]
     return {"runs": sorted(runs, key=lambda r: -r["created"])}
 
@@ -344,6 +345,53 @@ def stop(server, req: dict, token: str) -> dict:
     run.stop()
     server.supervisor.tick(clone=False)  # its workers are stopped before the answer, which waits for no clone
     return {"run": run.id, "state": run.state()}
+
+
+def running(server, req: dict):
+    """The run `req` names, which must be running: the operator changes only a running run's team or budget."""
+    run = find(server, req)
+    if run.state() != "running":
+        raise ValueError(f"{run.id} has {run.state()}: only a running run changes")
+    return run
+
+
+def priced(server):
+    return lambda m: server.litellm.find(m)[1] is not None
+
+
+def set_(server, req: dict, token: str) -> dict:
+    run = running(server, req)
+    if "budget" not in req:
+        raise ValueError("say what to set: budget")
+    budget = req["budget"]
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, (int, float)) or not budget > 0):
+        raise ValueError("budget is a number of dollars over 0, or null for no limit")
+    run.set_budget(budget, priced(server))
+    return {"run": run.id, "budget": budget}
+
+
+def add(server, req: dict, token: str) -> dict:
+    run = running(server, req)
+    c = run.config
+    members = agents(req.get("team"), server.backend, os.environ, lambda m: server.litellm.find(m)[0],
+                     priced(server), hours=(c["deadline"] - time.time()) / 3600, budget=c.get("budget"),
+                     subscription=bool(c.get("subscription")), grants=c.get("grants", []), allow=c.get("allow", []),
+                     taken={m["id"] for m in c["members"]} | {m["name"].lower() for m in c["members"]})
+    run.add(members)  # the supervisor's next tick makes their clones and starts them
+    return {"run": run.id, "added": [{k: m[k] for k in ("id", "harness", "model")} for m in members]}
+
+
+def remove(server, req: dict, token: str) -> dict:
+    run, ids = running(server, req), req.get("members")
+    if not isinstance(ids, list) or not ids or not all(isinstance(x, str) for x in ids):
+        raise ValueError("members is a list of agent ids")
+    ids = list(dict.fromkeys(x.strip().lstrip("@").lower() for x in ids))
+    for x in ids:
+        if x not in run.agents:
+            raise ValueError(f"{x} is not an agent on {run.id}'s team: `swarmory status` lists them")
+    run.remove(ids)
+    server.supervisor.tick(clone=False)  # their workers are stopped before the answer
+    return {"run": run.id, "removed": ids}
 
 
 RUN = Param("run", "string", "the run's id, from start or runs", True)
@@ -371,6 +419,19 @@ VERBS = {v.name: v for v in [
          "model calls, tokens and cost.", status, status_text, (RUN,)),
     Verb("stop", "server", "server", "Stops a run's workers for good. The run stays readable.", stop,
          lambda r, req: f"Stopped {r['run']}. It stays readable.", (RUN,), {**SAME, "destructiveHint": True}),
+
+    Verb("set", "server", "server", "Changes a running run's budget. The team hears it in general.", set_,
+         lambda r, req: "%s's budget is now %s." % (r["run"], "none" if r["budget"] is None else money(r["budget"])),
+         (RUN, Param("budget", "number", "the most its model calls may cost, in dollars at list prices", True)), SAME),
+    Verb("add", "server", "server", "Adds agents to a running run's team. They start at once, and the team hears who "
+         "they are in general.", add,
+         lambda r, req: "Added to %s: %s." % (r["run"], ", ".join("%s (%s)" % (m["id"], m["harness"])
+                                                                   for m in r["added"])),
+         (RUN, Param("team", "array", "one {harness, model?, role?, name?, args?} per agent", True)), WRITE),
+    Verb("remove", "server", "server", "Takes agents off a running run's team: their workers stop, their tokens stop "
+         "working, and their open issues are unassigned. Their messages and commits stay.", remove,
+         lambda r, req: "Took %s off %s's team." % (", ".join(r["removed"]), r["run"]),
+         (RUN, Param("members", "array", "the agents' ids", True)), {**SAME, "destructiveHint": True}),
 
     Verb("me", "run", "team", "Who you are, your unread message counts by conversation, and your open issues.",
          lambda run, who, req, gone: clock(run, run.team.me(who.member, req)), me_text),

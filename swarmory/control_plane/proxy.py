@@ -54,7 +54,7 @@ ROUTES = {  # (provider, method, path) -> whether it is a model call, recorded i
     ("gemini", "GET", "v1beta/models"): False,
 }
 DAY = 24 * 3600
-LIMITED = {429, 503, 529}  # an upstream's statuses for a rate limit or overload: try again later
+OUTAGE = 60  # seconds a member pauses when its provider failed a call or couldn't be reached, and said no wait
 KEY_HEADER = {"anthropic": "x-api-key", "openai": "authorization", "gemini": "x-goog-api-key"}
 HOP = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding", *KEY_HEADER.values(),
        "keep-alive", "proxy-connection", "te", "upgrade", "date", "server"}
@@ -159,6 +159,12 @@ def usage(provider: str, body: bytes):
     return model, used
 
 
+def busy(status: int) -> bool:
+    """A provider's answer that says to try again later: a rate limit (429), or an overload or outage (any 5xx). It
+    pauses the member and keeps its conversation, which isn't at fault."""
+    return status == 429 or status >= 500
+
+
 def delay(resp, body: bytes) -> float:
     """Seconds a limited upstream asks the caller to wait, from 5 to a day: its retry-after, in seconds or as an HTTP
     date; else from the error body, an object or Gemini's list of them: Gemini's RetryInfo retryDelay ("37s"), or the
@@ -249,6 +255,12 @@ class Proxy:
                 out.update(limited_at=max(at for at, _ in limits), limited_until=max(until for _, until in limits))
             return out
 
+    def pause(self, who, model: str, until: float):
+        """A provider can't take `who`'s calls to `model` until `until`: its worker waits that out and resumes."""
+        with self.lock:
+            mine = self.limits.setdefault(who, {})
+            mine[model] = (time.time(), max(until, mine.get(model, (0, 0))[1]))
+
     def _over(self, job) -> str | None:
         run = sum(s["usd"] for s in self.by.values())
         run_flight = sum(usd for _, usd in self.in_flight.values())
@@ -331,6 +343,8 @@ class Proxy:
                       and self.litellm.translates(provider, owner, asked))
         if translated:  # to LiteLLM, which translates: only the fields the route defines, and no caller headers
             if not self.litellm.ensure():
+                if model_call and not job:
+                    self.pause(who, asked, time.time() + OUTAGE)
                 return refuse(h, provider, 503, f"The server's LiteLLM, which serves {asked}, isn't running.")
             kept = {k: v for k, v in req.items() if k in FIELDS[route]}
             body = json.dumps(uncached({**kept, "model": translated})).encode()
@@ -387,16 +401,15 @@ class Proxy:
                 stream_err = e
                 h.log_message("upstream %s failed: %s", provider, e)
                 if status is None:
+                    if model_call and not job:
+                        self.pause(who, asked, time.time() + OUTAGE)
                     return refuse(h, provider, 502, f"The server couldn't reach {provider}: {e}")
             finally:
                 conn.close()
             # a job's calls are a trial's, not the member's conversation: they don't pause the member
-            if model_call and not job and status in LIMITED:
-                now = time.time()
-                until = now + delay(resp, plain(bytes(seen), resp.getheader("Content-Encoding") or ""))
-                with self.lock:
-                    mine = self.limits.setdefault(who, {})
-                    mine[asked] = (now, max(until, mine.get(asked, (0, 0))[1]))
+            if model_call and not job and busy(status):
+                self.pause(who, asked, time.time() + delay(resp, plain(bytes(seen),
+                                                                         resp.getheader("Content-Encoding") or "")))
             if not model_call or not 200 <= status < 300:
                 return
             body = plain(bytes(seen), resp.getheader("Content-Encoding") or "")

@@ -142,6 +142,9 @@ write it in BRIEF.md under "How we work", and give agents roles in `team.toml`.
 | `swarmory read` | Unread messages. |
 | `swarmory send ada "status?"` | Message an agent, or `general` for everyone. |
 | `swarmory status` | Time left, cost per agent, and the viewer link. |
+| `swarmory set --budget 20` | Change the run's budget. |
+| `swarmory add claude-code:claude-sonnet-5-5=2` | Add agents. They start at once. |
+| `swarmory remove ada` | Take an agent off the team. Its open issues are unassigned. |
 | `swarmory stop` | Stop the run. |
 | `swarmory help` | Every command. |
 

@@ -127,6 +127,7 @@ def test_an_agents_clone_is_made_before_its_worker_starts_and_only_once(serve, t
     served.server.supervisor.clone()
     assert (work / "mine").is_file(), "a restart cloned again"
 
+    served.server.supervisor.done.set()  # its loop would clone into the same folder as this test's prepare()
     shutil.rmtree(work / ".git")  # a work folder that is no clone
     (work.with_name("work.tmp") / "half").mkdir(parents=True)
     prepare(Path(served.server.runs.get(run.id).repo), work)
@@ -310,3 +311,51 @@ def test_swarmory_start_runs_a_whole_local_run_with_one_command(fake_agents, tmp
                 os.killpg(json.loads(f.read_text())["pid"], signal.SIGKILL)
             except (OSError, ValueError):
                 pass
+
+
+def test_the_operator_changes_a_running_team_and_the_team_hears_it(serve, monkeypatch):
+    """The first agent starts alone until it opens an issue. The operator sets the budget, adds an agent and removes
+    one, whose token then fails and whose issues are unassigned. The team is told once to push near the deadline and
+    near the end of each budget."""
+    from swarmory.control_plane import runs
+    monkeypatch.setattr(runs, "STAGGER", 60)
+    served = serve()
+    monkeypatch.setattr(served.server.litellm, "find", lambda m: ("anthropic", {}))  # every model has a price
+    run = served.start(team=[{"harness": "claude-code", "model": "claude-opus-5-5"}] * 2, budget=5)
+    r, specs = served.server.runs.get(run.id), served.backend.specs
+    ada = run.workers("ada")["ada"]
+    assert "You start first" in (Path(served.server.data) / "runs" / run.id / "members/ada/prompt.md").read_text()
+    time.sleep(1)
+    assert f"{run.id}/agent/grace" not in specs, "an agent started before the lead's plan"
+    run(ada, "new", title="split the work")
+    grace = run.workers("grace")["grace"]
+    assert "You start first" not in (Path(served.server.data) / "runs" / run.id / "members/grace/prompt.md").read_text()
+
+    assert served("set", run=run.id, budget=20) == {"run": run.id, "budget": 20} and r.proxy.budget == 20
+    assert served("set", run=run.id, budget=-1)["status"] == 400
+    added = served("add", run=run.id, team=[{"harness": "claude-code", "model": "claude-opus-5-5", "role": "review"}])
+    assert added["added"] == [{"id": "alan", "harness": "claude-code", "model": "claude-opus-5-5"}], added
+    run.workers("alan")
+    assert served("add", run=run.id, team=[{"harness": "claude-code", "name": "Ada"}])["status"] == 400
+
+    run(grace, "assign", id="i1", add=["me"])
+    run(grace, "move", id="i1", status="doing")
+    assert served("remove", run=run.id, members=["grace"]) == {"run": run.id, "removed": ["grace"]}
+    assert f"{run.id}/agent/grace" not in served.backend.live() and run(grace, "me")["status"] == 401
+    i1 = run(ada, "issue", id="i1")["issue"]
+    assert (i1["assignees"], i1["status"]) == ([], "todo")
+    assert run(ada, "assign", id="i1", add=["grace"])["status"] == 400
+    workers = {m["id"]: m["worker"] for m in served("status", run=run.id)["members"]}
+    assert workers == {"ada": "running", "grace": "removed", "vivek": None, "alan": "running"}, workers
+
+    r.proxy.totals = lambda jobs=False: {"ada": {"usd": 18.5}}
+    for _ in range(2):
+        r.warn(r.config["deadline"] - 300)
+    said = [m["text"] for m in run(ada, "read", conv="general", all=True)["messages"] if m["author"] == "swarmory"]
+    assert said[0].startswith("@all The operator set the run's budget to $20.00")
+    assert said[1].startswith("@all New on the team: Alan (alan), claude-code, role: review.")
+    assert said[2] == "@all The operator took Grace (grace) off the team. Their open issues are unassigned: " \
+                      "i1 split the work."
+    assert said[3].startswith("@all The run ends in about 5 minutes.") and "$18.50 of its $20.00" in said[4]
+    assert len(said) == 5, said
+    assert run(grace, "me")["status"] == 401

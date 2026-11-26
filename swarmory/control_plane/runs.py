@@ -27,7 +27,8 @@ from swarmory.harness.base import APIS
 from . import traces
 from .jobs import Jobs, git, limits
 from .policy import Principal, sha
-from .proxy import Proxy
+from .prompt import STAGGER
+from .proxy import Proxy, money
 from .supervisor import Want
 from .team import NotFound, Team, replay
 
@@ -63,6 +64,8 @@ while read -r old new ref; do
 done
 """
 READS = threading.Lock()  # around SESSIONS, which viewers' requests share
+WARN = 600  # seconds before the deadline that the team is told to push its work
+SPENT = 0.9  # the share of the budget at which the team is told to push its work
 
 
 def view_token(operator: str, run: str) -> str:
@@ -99,7 +102,8 @@ class Run:
                            bool(self.config.get("subscription")))
         self.mask = traces.masker(os.environ, self.team.digests)
         self.operator = self.config["operator"]
-        self.agents = [m["id"] for m in self.config["members"] if m["kind"] == "agent"]
+        self.agents = agent_ids(self.config)
+        self.changes = threading.Lock()  # around the operator's changes to config.json
         self.tip = (0.0, None)  # when main's head was last read, and what it was
         self.history = (None, [])  # main's head and /commits' answer for it
         self.uploads = threading.Lock()
@@ -121,19 +125,85 @@ class Run:
                 return Principal(held[0], held[1]["by"], held[1]["id"])
         return Principal("view") if hmac.compare_digest(sha(token), self.config["view_sha256"]) else None
 
+    def lead(self) -> str | None:
+        """The agent that starts alone while the others wait (STAGGER), or None once they all may start: an agent
+        starts on an empty board after the first, which would split the same work again."""
+        first = self.agents[0] if len(self.agents) > 1 and STAGGER else None
+        since = self.team.started.get(first)
+        alone = first and not self.team.board and set(self.team.started) <= {first}
+        return first if alone and (since is None or time.time() - since < STAGGER) else None
+
     def wanted(self, now: float) -> list:
         """What should run for this run now (supervisor.plan's input): each agent's worker while the run is running and
-        its repo has a main, and a worker for each job it holds or may claim."""
-        up = self.state(now) == "running"
-        agents = [Want(f"{self.id}/agent/{a}", up and self.head() is not None, self.team.started.get(a))
+        its repo has a main, only the lead() while there is one, and a worker for each job it holds or may claim."""
+        up, lead = self.state(now) == "running" and self.head() is not None, self.lead()
+        agents = [Want(f"{self.id}/agent/{a}", up and lead in (None, a), self.team.started.get(a))
                   for a in self.agents]
-        return agents + [Want(f"{self.id}/job/{j}", up, since) for j, since in self.jobs.workers()]
+        return agents + [Want(f"{self.id}/job/{j}", self.state(now) == "running", since)
+                         for j, since in self.jobs.workers()]
+
+    def warn(self, now: float):
+        """Tells the team once, WARN seconds before the deadline, and once at SPENT of each budget the run has, to push
+        its work: an agent cut off by the deadline or the budget loses what it hasn't pushed."""
+        if self.state(now) != "running":
+            return
+        left = self.config["deadline"] - now
+        if left <= WARN and self.config["deadline"] - self.config["created"] > 2 * WARN:
+            self.team.announce(f"@all The run ends in about {max(1, round(left / 60))} minutes. Commit, pull and push "
+                               "your work now, and comment on its issue: what is not on main when the run ends is "
+                               "lost.",
+                               f"deadline {self.config['deadline']}")
+        budget = self.config.get("budget")
+        spent = sum(u.get("usd") or 0 for u in self.proxy.totals().values()) if budget else 0
+        if budget and spent >= SPENT * budget:
+            self.team.announce(f"@all The run has spent {money(spent)} of its {money(budget)} budget, and model calls "
+                               "stop when it is spent. Commit, pull and push your work now, and comment on its issue.",
+                               f"budget {budget}")
+
+    def change(self, **values):
+        """Sets config.json's `values`."""
+        with self.changes:
+            self.config.update(values)
+            write(self.dir / "config.json", self.config)
+
+    def set_budget(self, budget, priced):
+        """The run's budget is now `budget` dollars, or None for no limit; the team hears it."""
+        if budget is not None:
+            unpriced([m for m in self.config["members"] if m["id"] in self.agents], priced)
+        self.change(budget=budget)
+        self.proxy.budget = budget
+        spent = sum(u.get("usd") or 0 for u in self.proxy.totals().values())
+        said = money(budget) if budget is not None else "none"
+        self.team.announce(f"@all The operator set the run's budget to {said} (spent so far: {money(spent)}).")
+
+    def add(self, members: list):
+        """Adds agents to the team: the supervisor starts them, and the team hears who they are."""
+        with self.changes:
+            self.config["members"] = self.config["members"] + members
+            write(self.dir / "config.json", self.config)
+            self.agents = agent_ids(self.config)
+        self.team.add(members)
+        self.team.announce("@all New on the team: " + "; ".join(
+            f"{m['name']} ({m['id']}), {m['harness']}" + (f", role: {m['role']}" if m.get("role") else "")
+            for m in members) + ". Welcome them, and point them at open issues.")
+
+    def remove(self, ids: list):
+        """Takes agents off the team: the supervisor stops them, their tokens stop working, and their open issues are
+        unassigned for the team to pick up."""
+        now = time.time()
+        with self.changes:
+            self.config["members"] = [{**m, "removed": now} if m["id"] in ids else m for m in self.config["members"]]
+            write(self.dir / "config.json", self.config)
+            self.agents = agent_ids(self.config)
+        freed = self.team.remove(ids)
+        names = ", ".join(f"{self.team.members[x]['name']} ({x})" for x in ids)
+        self.team.announce(f"@all The operator took {names} off the team." + (
+            " Their open issues are unassigned: " + "; ".join(f"{i} {t}" for i, t in freed) + "." if freed else ""))
 
     def stop(self):
         """Marks the run stopped, for good: the supervisor stops its workers, and the run stays readable."""
         if not self.config.get("stopped"):
-            self.config["stopped"] = time.time()
-            write(self.dir / "config.json", self.config)
+            self.change(stopped=time.time())
 
     def status(self, live: frozenset) -> dict:
         """The `status` verb's answer: the run's state, and each member's worker, sessions and what its model calls
@@ -142,8 +212,9 @@ class Run:
         members = []
         for m in self.config["members"]:
             agent, name = m["kind"] == "agent", f"{self.id}/agent/{m['id']}"
-            worker = None if not agent else "running" if name in live else state_ if state_ != "running" \
-                else "waiting for main" if self.head() is None else "down"
+            worker = None if not agent else "removed" if m.get("removed") else "running" if name in live \
+                else state_ if state_ != "running" else "waiting for main" if self.head() is None \
+                else "waiting for lead" if self.lead() not in (None, m["id"]) else "down"
             members.append({
                 "id": m["id"], "harness": m.get("harness", ""), "model": (m.get("model") or "default") if agent
                 else "a person", "worker": worker, "starts": self.team.starts[m["id"]] if agent else None,
@@ -295,6 +366,11 @@ class Run:
                     tar.add(f"{tmp}/work.bundle", f"{self.id}/work.bundle")
 
 
+def agent_ids(config: dict) -> list:
+    """The run's agents now, in the order they joined: not those the operator took off the team."""
+    return [m["id"] for m in config["members"] if m["kind"] == "agent" and not m.get("removed")]
+
+
 def state(config: dict, now: float = None) -> str:
     """running, ended (its deadline has passed) or stopped (the operator stopped it)."""
     return "stopped" if config.get("stopped") else "ended" if (now or time.time()) >= config["deadline"] else "running"
@@ -309,17 +385,37 @@ def write(path: Path, obj):
 
 def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple:
     """(the config of a new run, its view token) for a `start` request, checked. `operator` is the token of whoever
-    asked, which the view token is made from. `owner` gives the provider that serves a model, whose key an agent
-    on that model needs. `priced` says whether the server's price table lists a model: a budgeted run's gateway
-    refuses every call to a model it can't price. A ValueError says what is wrong in one line."""
+    asked, which the view token is made from. `owner` and `priced` are agents()'s. A ValueError says what is wrong in
+    one line."""
     mission, (hours, budget) = req.get("mission"), limits(req)
-    team, grants, allow = req.get("team"), req.get("grant") or [], req.get("allow") or []
+    grants, allow = req.get("grant") or [], req.get("allow") or []
     me, jobs, subscription = req.get("me") or "operator", req.get("jobs") or False, bool(req.get("subscription"))
     if not isinstance(mission, str) or not 0 < len(mission) <= 100:
         raise ValueError("mission is the mission's name, 1 to 100 characters")
     if not all(isinstance(x, list) and all(isinstance(s, str) for s in x) for x in (grants, allow)) \
             or not isinstance(me, str) or not isinstance(jobs, bool):
         raise ValueError("grant and allow are lists of names, me a name and jobs true or false")
+    op = re.sub(r"[^a-z]", "", me.lower())  # the operator keeps their own name: no agent is given it by default
+    if not op or op in RESERVED:
+        raise ValueError(f"Your id {op!r} is empty or a reserved word. It comes from your git user.name.")
+    members = agents(req.get("team"), backend, env, owner, priced, hours=hours, budget=budget,
+                     subscription=subscription, grants=grants, allow=allow, taken={op})
+    members.append({"id": op, "name": op.title(), "kind": "human", "operator": True})
+    now = time.time()  # the id's date and time are UTC, wherever the server runs: an id has no room for a zone
+    rid = f"{re.sub(r'[^A-Za-z0-9-]', '-', mission)}-{time.strftime('%m%d-%H%M', time.gmtime(now))}-" \
+          f"{secrets.token_hex(2)}"
+    view = view_token(operator, rid)
+    return {"run": rid, "mission": mission, "created": now, "deadline": int(now + hours * 3600), "members": members,
+            "operator": op, "view_sha256": sha(view), "channels": [{"id": "general", "about": "The whole team."}],
+            "budget": budget, "jobs": jobs, "grants": grants, "allow": allow, "subscription": subscription}, view
+
+
+def agents(team, backend, env, owner, priced, *, hours: float, budget, subscription: bool, grants: list, allow: list,
+           taken: set) -> list:
+    """The members a `start` or an `add` request's team makes, checked: each agent's id is its name's, else the next
+    spare one of NAMES, and none is one of `taken`. They run `hours` more, under `budget`. `owner` gives the provider
+    that serves a model, whose key an agent on that model needs. `priced` says whether the server's price table lists
+    a model: a budgeted run's gateway refuses every call to a model it can't price."""
     if not isinstance(team, list) or not team:
         raise ValueError("A team is a list of at least one agent.")
     built_in, command = [h.name for h in harness.HARNESSES], harness.COMMAND_FIELDS
@@ -344,19 +440,17 @@ def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple
                              f"provider ({', '.join(APIS)}), such as anthropic/claude-sonnet-5-5.")
     line = lambda m, k: " ".join((m.get(k) or "").split()) or None  # noqa: E731
     named = [line(m, "name") and re.sub(r"[^a-z0-9-]", "", line(m, "name").lower()) for m in team]
-    op = re.sub(r"[^a-z]", "", me.lower())  # the operator keeps their own name: no agent is given it by default
     spare = (i for r in itertools.count(1) for n in NAMES for i in [n if r == 1 else f"{n}{r}"]
-             if i not in named and i != op)
+             if i not in named and i not in taken)
     ids = [next(spare) if i is None else i for i in named]
     for m, i in zip(team, ids):
         if m.get("name") and (not i[:1].isalpha() or i in RESERVED or re.fullmatch(r"i\d+", i)):
             raise ValueError(f"The name {m['name']!r} makes the id {i!r}, but an id starts with a letter (so it can be "
                              f"@mentioned) and is not {', '.join(RESERVED)} or i<number> (an issue).")
+        if i in taken:
+            raise ValueError(f"The name {m['name']!r} makes the id {i!r}, which is taken: give another name.")
     if len(set(ids)) < len(ids):
         raise ValueError(f"Two agents have the id {next(i for i in ids if ids.count(i) > 1)!r}: give them other names.")
-    if not op or op in ids or op in RESERVED:
-        raise ValueError(f"Your id {op!r} is empty or taken (agents: {', '.join(ids)}). "
-                         "It comes from your git user.name.")
     used = list({m["harness"]: harness.of(m) for m in team}.values())
     backend.check(used, grants, allow)
     for m in team if subscription else ():  # a login calls only its own provider: no call is translated
@@ -371,7 +465,22 @@ def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple
         if not login or (login.expires or float("inf")) < time.time() + hours * 3600:
             raise ValueError(f"The team has {h.name} agents, so the server's {h.login} must be {h.login_from}, good "
                              "until the run ends.")
-    for m in team if budget is not None and priced else ():  # else every call of that agent's is refused, mid-run
+    if budget is not None and priced:
+        unpriced(team, priced)
+    for m in () if subscription else team:  # else every model call of that agent's fails with the gateway's 503
+        key = f"{(owner(m.get('model') or None) or harness.of(m).provider).upper()}_API_KEY"
+        if not env.get(key):
+            raise ValueError(f"The {m['harness']} agent on {m.get('model') or 'its default model'} needs {key}, which "
+                             "the server's environment does not have.")
+    return [{"id": i, "name": line(m, "name") or i.title(), "harness": m["harness"], "model": m.get("model") or None,
+             "role": line(m, "role"), "args": m.get("args") or [], "kind": "agent",
+             **{k: m[k] for k in harness.COMMAND_FIELDS if m.get(k)}} for i, m in zip(ids, team)]
+
+
+def unpriced(team: list, priced):
+    """A ValueError if a budgeted run would have an agent whose model the server can't price: the gateway would refuse
+    every call of that agent's, mid-run."""
+    for m in team:
         if not m.get("model"):
             raise ValueError(f"The run has a budget, so give the {m['harness']} agent a model, such as "
                              f"{m['harness']}:MODEL, whose price the server can check.")
@@ -379,22 +488,6 @@ def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple
             raise ValueError(f"The run has a budget, and the server has no price for {m['model']!r}, so the gateway "
                              "would refuse every call to it. Pick a model LiteLLM's price table lists, or run with "
                              "--budget none.")
-    for m in () if subscription else team:  # else every model call of that agent's fails with the gateway's 503
-        key = f"{(owner(m.get('model') or None) or harness.of(m).provider).upper()}_API_KEY"
-        if not env.get(key):
-            raise ValueError(f"The {m['harness']} agent on {m.get('model') or 'its default model'} needs {key}, which "
-                             "the server's environment does not have.")
-    now = time.time()  # the id's date and time are UTC, wherever the server runs: an id has no room for a zone
-    rid = f"{re.sub(r'[^A-Za-z0-9-]', '-', mission)}-{time.strftime('%m%d-%H%M', time.gmtime(now))}-" \
-          f"{secrets.token_hex(2)}"
-    view = view_token(operator, rid)
-    members = [{"id": i, "name": line(m, "name") or i.title(), "harness": m["harness"], "model": m.get("model") or None,
-                "role": line(m, "role"), "args": m.get("args") or [], "kind": "agent",
-                **{k: m[k] for k in harness.COMMAND_FIELDS if m.get(k)}} for i, m in zip(ids, team)]
-    members.append({"id": op, "name": op.title(), "kind": "human", "operator": True})
-    return {"run": rid, "mission": mission, "created": now, "deadline": int(now + hours * 3600), "members": members,
-            "operator": op, "view_sha256": sha(view), "channels": [{"id": "general", "about": "The whole team."}],
-            "budget": budget, "jobs": jobs, "grants": grants, "allow": allow, "subscription": subscription}, view
 
 
 class Runs:

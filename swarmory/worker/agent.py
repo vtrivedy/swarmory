@@ -269,16 +269,17 @@ class Agent:
                     if not prompt or "Messages for you:" in prompt or not self.account()[0]:
                         break
                 continue
-            # a limit this session met may expire while its end uploads: when it was set counts too
+            # a provider's limit or outage this session met (the gateway pauses the member for either) may end while
+            # its end uploads: when it was set counts too
             if ago and (ago["until"] > 0 or ago["limited"] <= took):  # the conversation is fine: it goes on later
                 # a limit that keeps coming back (a daily quota with a short retry delay) waits longer each time
                 wait = max(5, ago["until"], min(RETRY * 2 ** pauses, 3600) if pauses else 0)
                 woke = time.localtime(time.time() + wait)
-                say(f"paused for a provider limit until {time.strftime('%H:%M %Z', woke)}")
+                say(f"paused for a provider limit or outage until {time.strftime('%H:%M %Z', woke)}")
                 nap(wait)
                 pauses += 1
-                prompt = "Your last session stopped at a provider limit, which has reset." + (
-                    f"\n\n{news}" if news else "")
+                prompt = ("Your last session stopped when the model provider limited or failed its calls. That has "
+                          "passed." + (f"\n\n{news}" if news else ""))
                 continue
             fails += 1  # a failed session is retried a minute later, until the deadline
             why = f"exit {last}" if last else "no model answer"

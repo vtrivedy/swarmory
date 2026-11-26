@@ -50,6 +50,13 @@ def code(url: str, token: str = "", body: bytes = None, basic: bool = False) -> 
         return e.code
 
 
+@pytest.fixture(autouse=True)
+def together(monkeypatch):
+    """A test's agents start together, unless it tests the stagger itself."""
+    from swarmory.control_plane import runs
+    monkeypatch.setattr(runs, "STAGGER", 0)
+
+
 class Stub:
     """A backend whose workers run nowhere. It keeps each spec it was asked to start, so a test can act as the worker
     with the token the server minted for it, and a worker it started stays live until it is stopped."""
