@@ -12,5 +12,5 @@ token.json
 output/
 .DS_Store
 runs/
-!skills/eval-factory/templates/task/tests/cases/*/output/
+!missions/eval-factory/.agents/skills/eval-factory/templates/task/tests/cases/*/output/
 uv.lock

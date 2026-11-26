@@ -1,4 +1,4 @@
-"""skills/eval-factory/scripts/lint_task.py: a sealed task passes, and each isolation or grading break
+"""missions/eval-factory/.agents/skills/eval-factory/scripts/lint_task.py: a sealed task passes, and each isolation or grading break
 fails."""
 import json
 
