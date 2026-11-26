@@ -3,8 +3,8 @@ artifacts = ["/app/output"]
 
 [task]
 name = "<team>/<task-name>"
-version = "1.0.0"
 description = "<one line>"
+keywords = ["<domain>", "<capability>"]
 
 [environment]
 network_mode = "no-network"
@@ -13,7 +13,7 @@ memory_mb = 2048
 
 [agent]
 user = "agent"
-timeout_sec = 3720.0  # the 60 minutes stated in instruction.md, plus 2 for harness startup
+timeout_sec = 3720.0  # 60 minutes stated in instruction.md, plus 2 minutes for agent startup
 
 [verifier]
 environment_mode = "separate"
@@ -23,6 +23,6 @@ timeout_sec = 120.0
 network_mode = "no-network"
 
 [metadata]
-claim = "<one sentence: who, does what, under which conditions>"
-how_items_are_made = "<how the answer is built into the environment>"
+claim = "<one sentence: who does what under which condition>"
+how_items_are_made = "<how the answer is generated into the environment>"
 verifier_kind = "<code, decision call, or rubric judge>"

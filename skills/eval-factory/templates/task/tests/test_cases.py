@@ -1,4 +1,4 @@
-"""The verifier is right in both directions: every stored case scores what its expected.json says."""
+"""Verify the grader in both directions: every stored case must match its expected.json."""
 import json
 import math
 from pathlib import Path
@@ -37,9 +37,9 @@ def test_required_cases_exist():
 def test_instruction_states_every_graded_rule():
     instruction = (HERE.parent / "instruction.md").read_text()
     assert "/app/output/answer.txt" in instruction
-    assert "exactly one line" in instruction
+    assert "one line" in instruction
     assert "not a link" in instruction  # the verifier rejects a symlinked answer
-    assert "Write nothing" in instruction  # the verifier fails any other file in /app/output
+    assert "Write nothing else" in instruction  # the verifier fails any extra file in /app/output
     assert "1 MiB" in instruction  # the verifier fails a larger answer
 
 
@@ -55,7 +55,9 @@ def test_grade_is_identical_in_fresh_processes(tmp_path):
     for run in range(2):
         folder = tmp_path / str(run)
         folder.mkdir()
-        subprocess.run([sys.executable, "-I", str(HERE / "verifier.py"), str(HERE / "cases/reference/output"),
-                        str(folder)], check=True)
+        subprocess.run(
+            [sys.executable, "-I", str(HERE / "verifier.py"), str(HERE / "cases/reference/output"), str(folder)],
+            check=True,
+        )
         outputs.append((folder / "grade.json").read_bytes())
     assert outputs[0] == outputs[1]

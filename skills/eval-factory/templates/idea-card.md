@@ -1,45 +1,52 @@
 # <Task name>
 
-Keep the task's record here, from the first idea to the frozen version. Answer each field in a few plain sentences,
-or write "unknown". The refund task in [SKILL.md](../SKILL.md#1-brainstorm) shows a shortened example.
+Keep the task record in `work/<task-name>/idea-card.md` across every version.
+Answer each section in a few plain sentences, or write "unknown".
 
 ## Claim
 
-Write "measure" if the score reports how well models do this. Write "improve" if the task finds where your own agent
-fails, so you can change it. For "improve", the target is that agent in its own harness. Then write one sentence that names the target model and harness, the behavior, and the
-condition that makes it hard.
+Write "capability" if the task targets an intermediate pass rate to measure progress.
+Write "regression" if the task guards against backsliding at a near-complete pass rate.
+Write one sentence that names the target model, the agent CLI, the capability, and the hard condition.
 
 ## Untested
 
-Name what the claim leaves out, so that nobody reads more into a score than it measures.
+List what the claim leaves out so readers do not overstate what the score measures.
 
 ## Evidence
 
-Describe what a solver with the capability leaves behind, and what a solver without it leaves instead. Name the
-difference that a check can read.
+Describe what a solver with the capability leaves in files or service records.
+Describe what a solver without the capability leaves instead.
+Name the exact difference that a script can read.
 
 ## Why it matters
 
-Cite a run where a model failed at this, a reported failure, or a hunch, and say which.
+Cite a real run, a reported failure, or a hunch, and state which one it is.
 
 ## Closest existing task
 
-Name the nearest public task, what this task adds, and the searches you ran.
+Name the closest public task, what this task adds, and the searches you ran.
 
-## Cheapest way to pass without the capability
+## Cheapest shortcut
 
-Name it, and say why it fails here. If one blanket policy passes, such as "always retry", add a control variant where
-that policy fails.
+Name the cheapest way to pass without the capability, and explain why it fails here.
 
-## Knob
+## Control and abstain variants
 
-Name the one condition you will change to make a harder version, and what it changes about what the solver must
-figure out.
+Name a control variant where a blanket policy fails.
+Name an abstain variant where taking no action is right, paired with an answerable case.
+
+## Harder condition
+
+Name one condition you can tighten on a copy to test stronger judgment without adding scale.
+
+## Keep rule
+
+Write the target range of passes out of 10 runs before you start Phase 5.
 
 ## Versions
 
-Add one entry per version, newest last. `v<N>` is the version in every brief.
+Add one bullet per version, newest last.
+Use `v<N>` in every reviewer brief.
 
-- **v1, commit `<sha>`.** What changed. Whether the free checks passed. Each model you ran, its passes out of runs, and
-  the cause of each failure. Each reviewer's verdict. Each error found: what was wrong, how you found it, and which
-  versions it affects. What you'd change next, and why.
+- **v1, commit `<sha>`.** Record changes, free check results, reviewer verdicts, model results, and failure causes. Log every defect found, which versions it affects, and whether scores stay comparable to prior versions.

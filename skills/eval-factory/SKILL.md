@@ -1,213 +1,156 @@
 ---
 name: eval-factory
-description: Build eval tasks for models and agents in Harbor format, from the first idea to a measured task. Use when you brainstorm an eval, build a task's environment and verifier, verify a task with models and reviewers, repair a broken task, make a task harder, or report eval results.
+description: Build eval tasks in Harbor format from idea to measured score. A pass means the solver has the capability, and a fail means it lacks it. Use when you design, build, verify, repair, or measure a task.
 ---
 
 # Eval factory
 
-You build eval tasks in Harbor format. A finished task passes when the solver has the capability the task names, and
-fails when it lacks it. Follow the map below in order. Each step says what to do, which file to use, and when the step
-is done. The refund task, an invented example, shows the result of each step.
+Build eval tasks in Harbor format autonomously. Run reviewers and models whenever a phase needs them, within any budget the user sets. Do not pause for approval.
 
-Run models whenever a step needs them, within any budget the user set. If the user asked you to work autonomously,
-don't stop to ask.
+A pass must mean the solver has the capability. A fail must mean the solver lacks the capability. Keep Harbor task files in `tasks/<task-name>/` and working records in `work/<task-name>/`. That split keeps idea cards, reviews, labels, and reports out of Harbor uploads and out of clean git checks on the task folder.
 
-## The map
+Four references hold commands, code, and Harbor rules.
 
-| Step | Do | Use | Done when |
-|---|---|---|---|
-| [1. Claim](#1-write-the-claim) | Say what the task measures and how a pass looks | [idea-card.md](templates/idea-card.md), [critic-brief.md](templates/critic-brief.md) | The critic answers `BUILD` |
-| [2. Environment](#2-build-the-environment) | Build the data, tools, and services around a known answer | [templates/task/](templates/task), [hardening.md](references/hardening.md) | A script derives the key from the environment |
-| [3. Verifier](#3-write-the-verifier) | Write the checks that decide pass or fail | [verifiers.md](references/verifiers.md) | Every stored case scores what it should |
-| [4. Instruction](#4-write-the-instruction) | Tell the solver the outcome you check | [reader-brief.md](templates/reader-brief.md) | The reader answers `PASS` |
-| [5. Free checks](#5-run-the-free-checks) | Prove the task works with no model | [verify_task.py](scripts/verify_task.py), [harbor.md](references/harbor.md) | `free` exits 0 with no `skip` row |
-| [6. Review](#6-send-the-auditor-and-the-hacker) | Have others solve it blind and try to break it | [auditor-brief.md](templates/auditor-brief.md), [hacker-brief.md](templates/hacker-brief.md) | `PASS` and `NONE_FOUND` |
-| [7. Model runs](#7-run-models-and-read-every-run) | Run models and name the cause of every failure | [harbor.md](references/harbor.md), [summarize_runs.py](scripts/summarize_runs.py) | The target model fails some runs for the claim's reason |
-| [8. Repair](#8-repair) | Fix what steps 5 to 7 found | The file the cause names | Back to step 5 |
-| [9. Harder](#9-make-it-harder) | Only when the target passes every run | Your idea card's knob | Back to step 5 |
-| [10. Report](#10-measure-and-report) | Freeze the task and measure it | [probe_odds.py](scripts/probe_odds.py), [harbor.md](references/harbor.md#write-the-report) | The report has every item |
+- [references/environment.md](references/environment.md) covers task layout, synthetic data, isolation, mock services, preflight checks, leak searches, and known exploits.
+- [references/verifiers.md](references/verifiers.md) covers deterministic verifier code, error handling, stored cases, and grade records.
+- [references/judges.md](references/judges.md) covers model-based grading, isolated binary rubric judges, and three-way judge calibration.
+- [references/harbor.md](references/harbor.md) covers tool checks, reviewer dispatch, free checks, solver shells, model runs, reruns, freezing, counting, and reporting.
 
-For an existing task, start at the step that matches the job. If every run scores 0 or every run scores 1, start with
-[the all-0 or all-1 checklist](references/harbor.md#all-0-or-all-1).
+Before Phase 1, [check the local tools and model endpoint](references/harbor.md#check-prerequisites). If a prerequisite fails, stop and report the failure.
 
-## Files
+## How an eval fails
 
-| File | What it holds |
-|---|---|
-| [templates/task/](templates/task) | A complete Harbor task to copy: `task.toml`, `instruction.md`, `environment/`, `solution/solve.sh`, `tests/` with the verifier and stored cases, and `preflight/` |
-| [templates/idea-card.md](templates/idea-card.md) | The task's record, from claim to frozen version |
-| [templates/](templates/) `*-brief.md` | The prompts for the critic, reader, auditor, and hacker |
-| [references/verifiers.md](references/verifiers.md) | Verifier code to copy for each kind of check |
-| [references/hardening.md](references/hardening.md) | Isolation settings, the preflight, and known exploits with their defenses |
-| [references/harbor.md](references/harbor.md) | Every command, known traps, the all-0 or all-1 checklist, and the report format |
-| [references/benchmarks.md](references/benchmarks.md) | Published benchmarks whose designs are worth copying |
-| [scripts/verify_task.py](scripts/verify_task.py) | `doctor` checks setup, `free` runs every check that needs no model, `cleanup` stops leaked sandboxes |
-| [scripts/lint_task.py](scripts/lint_task.py) | Checks isolation settings and the reference case without building |
-| [scripts/summarize_runs.py](scripts/summarize_runs.py) | Counts each run as a pass, fail, refusal, or infrastructure failure |
-| [scripts/probe_odds.py](scripts/probe_odds.py) | Intervals for one task, a set of tasks, or two versions, and the odds of a keep rule |
-| [scripts/preflight_agent.py](scripts/preflight_agent.py) | The Harbor agent that `verify_task.py` uses to run the preflight. You never run it directly. |
+A score is valid only when the claim, the instruction, and the verifier agree. Otherwise the task fails in one of three ways.
 
-## Reviewers
-
-You build the task. Every reviewer is a new agent that never sees your context, on a different model family when one
-is available. Give it its brief with every `<...>` filled, the task folder, and this skill's folder path. It writes
-its report to `tasks/<task-name>/reviews/<role>-v<N>.md` and ends with one verdict line.
-
-## 1. Write the claim
-
-1. Copy [idea-card.md](templates/idea-card.md) to `tasks/<task-name>/idea-card.md` and fill each field.
-2. Name the target model and harness, one behavior a run shows, and the condition that makes it hard. If the user
-   named no model, use the strongest one the endpoint lists.
-3. Write what a run with the capability leaves behind, and what a run without it leaves. A check must be able to tell
-   them apart, so the judgment has to land in a file, a record, or a field.
-4. Name the cheapest way to pass without the capability. If one blanket policy passes, such as "always retry", plan a
-   second task folder where that policy fails.
-5. Search [benchmarks.md](references/benchmarks.md) and `harbor datasets list` for a close task. Start from it if one
-   exists.
-6. Send the [critic](templates/critic-brief.md). On `REVISE`, fix the named fields and send a new critic. On `DROP`,
-   pick another idea. After three rounds without `BUILD`, stop and report.
-
-Reject an idea that one script solves without the environment.
-
-> **Refund task.** Claim: when a refund call times out, the support agent makes sure exactly one refund happens before
-> it tells the customer. Without the capability, the payment ledger shows two refunds. Shortcut: "never retry", so a
-> second folder where the first call times out before it commits makes "never retry" fail. Knob: how long the refund's
-> status reads "pending".
-
-## 2. Build the environment
-
-1. Copy [templates/task/](templates/task) to `tasks/<task-name>/`.
-2. Decide the answer first. Generate the data from it with a seeded script kept in `tests/`, so the solver's image
-   never holds the answer. Read a sample of what the script produced.
-3. Make every fact the verifier checks readable by the solver.
-4. Add the defects real data has, such as near-duplicate records, mixed units, and conflicting policies.
-5. Install the tools a practitioner would use, so no run fails on setup.
-6. Run each mock service as its own service in `environment/docker-compose.yaml`. The service owns its state and logs
-   every call. List those files in `artifacts` in `task.toml`.
-7. Keep the isolation settings that the template already has. [hardening.md](references/hardening.md) explains each.
-8. Add a line to `preflight/preflight_checks.sh` for each tool the task needs.
-
-> **Refund task.** A mock payments API logs every refund to a ledger and every call to a call log. Order 1182 was
-> charged twice for a $42.10 item. In `refund-committed`, the first refund call commits and then times out. In
-> `refund-uncommitted`, it times out before it commits.
-
-## 3. Write the verifier
-
-1. Write the rule as one sentence: "Pass if and only if <an outcome you can observe>".
-2. Check the final state, not the steps the solver took.
-3. Use code for every check that code can decide. Use a decision call for a narrow yes-or-no question about language,
-   and a rubric judge only for open output. Give either one the evidence.
-4. Parse each value and compare it exactly. Accept harmless variations in format and order.
-5. Check that nothing else changed.
-6. Copy the code for each check from [verifiers.md](references/verifiers.md).
-7. Store these cases in `tests/cases/<name>/`, each with an `expected.json`, and run `uvx pytest tests`:
-
-| Case | Holds | `expected.json` |
+| Failure | Meaning | Common causes |
 |---|---|---|
-| `reference` | What `solution/solve.sh` writes | `{"reward": 1.0}` |
-| `alternative` | Another valid answer | `{"reward": 1.0}` |
-| `empty` | Nothing | `{"reward": 0.0}` |
-| `garbage` | Malformed output | `{"reward": 0.0, "failed_check": "<id>"}` |
-| `exploit-<name>` | The cheapest shortcut, written as code | `{"reward": 0.0, "reward_without_hardening": 1.0}` |
-| `near-miss` | A plausible wrong answer | `{"reward": 0.0, "failed_check": "<id>", "partial_score": <fraction>}` |
-| `side-effect` | A correct answer plus a change it shouldn't make | `{"reward": 0.0, "failed_check": "<id>"}` |
+| False pass | A solver without the capability passes | Shortcut, readable key, weak check, missed collateral change |
+| False fail | A solver with the capability fails | Unstated rule, brittle check, wrong key, broken tool |
+| Noise | The score moves without a capability change | Too few runs, reused tuning runs, uncalibrated judge, unrecorded runtime change |
 
-`reward_without_hardening` is the score with the defense turned off. A 1 there proves the hole was real.
+## Workflow map
 
-> **Refund task.** Pass if and only if the ledger has exactly one new refund, of $42.10 on order 1182, nothing else
-> changed, and the reply states that the refund was issued, its amount, and when it arrives.
+Follow the phases in order. Take variant one through Phase 3 before you build paired variants. Early defects multiply across copies. After variant one passes Phase 3, build and verify each control and abstain variant before Phase 5.
 
-## 4. Write the instruction
+For an existing task, write its idea card and port it to the template layout if needed. Then start at Phase 2 verifier checks. If every run scores 0 or 1, start at [all-0 or all-1 triage](references/harbor.md#triage-all-0-or-all-1).
 
-1. Trace every check to an instruction sentence, and give every stated requirement a check. Leave a rule out only when
-   finding it is the capability.
-2. State the outcome, the output path, the format, and the limits. Never state the method.
-3. Make every fact true and every unit explicit.
-4. Send the [reader](templates/reader-brief.md) for its first section only.
+| Phase | Output | Gate | On failure |
+|---|---|---|---|
+| [1. Brainstorm](#phase-1-brainstorm) | `work/<task-name>/idea-card.md` | Critic answers `BUILD` | Revise card or pick a new idea |
+| [2. Build](#phase-2-build) | `tasks/<task-name>/` with stored cases | Reader answers `PASS`, cases and lint pass | Fix owning Build sub-stage |
+| [3. Verify](#phase-3-verify) | Free checks, reviews, labeled runs | Free checks 0, auditor 1, hacker `NONE_FOUND`, capability-only fails | Go to Phase 4 |
+| [4. Repair](#phase-4-repair) | Smallest fix, regression case, new version | Re-pass from changed sub-stage through Phase 3 | Drop after three failed rounds |
+| [5. Measure](#phase-5-measure) | Frozen commit and `work/<task-name>/report.md` | Frozen `free` passes and report is complete | Fix missing setup or rerun outages |
 
-> **Refund task.** "Order 1182 was charged twice for the same $42.10 item. Refund the duplicate charge with your
-> payments tools. Then write the customer a reply in `/app/output/reply.txt` that says the refund was issued, states
-> its amount, and says when it will arrive. Don't change any other order. Only a fully correct result passes." The
-> instruction doesn't mention timeouts, because noticing one is the capability.
+## Independent reviewers
 
-## 5. Run the free checks
+You know the hidden intent, so you miss gaps in your own task. Run each reviewer on another model family when available, or in a fresh session with no shared context. [Dispatch each brief](references/harbor.md#dispatch-a-reviewer) with every placeholder filled, and read the verdict on its last line.
 
-1. Commit the task on a work branch.
-2. Run [lint_task.py](scripts/lint_task.py) and then [verify_task.py](scripts/verify_task.py) `free`. The commands are
-   in [harbor.md](references/harbor.md#check-the-task-with-no-model).
-3. Fix every failed row. A failed row is a defect in the task, not in the check.
+Start the card at `v1`. Whenever you edit a file that a reviewer or model read, start a new version `v<N>`. Commit `tasks/<task-name>/` on a work branch before every check, review, or model run. Record the commit SHA in `work/<task-name>/idea-card.md`.
 
-## 6. Send the auditor and the hacker
+## Phase 1. Brainstorm
 
-1. Build the image and give each reviewer a shell command, as
-   [harbor.md](references/harbor.md#open-a-shell-in-the-solvers-image) shows.
-2. Send the [auditor](templates/auditor-brief.md). Score its answer with the verifier. It must score 1.
-3. Send the [hacker](templates/hacker-brief.md). Each break it finds becomes a stored case or a preflight line.
+Produce `work/<task-name>/idea-card.md`. Exit when the critic answers `BUILD`.
 
-> **Refund task.** The hacker refunded once, then deleted the duplicate charge from the order database. Every check
-> passed, because no check read that database.
+1. Copy [templates/idea-card.md](templates/idea-card.md), the task record, to `work/<task-name>/idea-card.md`.
+2. Ground the task in real work or an observed failure. Invented checklists miss real agent failures and drift as soon as you read traces.
+3. Classify the task as `capability` or `regression`, and state a narrow claim with untested scope. Capability tasks target intermediate pass rates for progress, while regression tasks guard against backsliding.
+4. Require the capability to change saved state. Solvers often claim success without acting, so a script must read the difference in files or service records.
+5. Plan paired control and abstain variants. Tasks with only positive cases reward blanket policies. Pair every abstain case with an answerable case so an always-refuse solver cannot pass.
+6. Pick work that is hard to do, cheap to check, novel, and unsaturated. A verifier as hard as the task inherits solver errors, and public or ceiling tasks turn signal into recall or noise.
+7. Reject tasks that need interactive prompts, GUI clicks outside a GUI claim, or triggers for unrelated safety refusals. Those failures block non-interactive agents for reasons outside the claim.
+8. Protect judgment from rigid checklists. Never turn a judgment task into a naming checklist or give the solver a helper that mirrors the verifier score.
+9. Send [templates/critic-brief.md](templates/critic-brief.md), the idea-review prompt, to a fresh critic. On `REVISE`, update the named fields and send a new critic. On `DROP`, choose another idea. After three rounds without `BUILD`, stop and report.
 
-## 7. Run models and read every run
+## Phase 2. Build
 
-1. Run a cheap model first, to find bugs in the task.
-2. Run two or three models of different strength. A failure they share points to the task. A failure unique to one
-   model points to that model.
-3. Keep one strong model out of every run until step 10.
-4. Count the runs with [summarize_runs.py](scripts/summarize_runs.py).
-5. Read every pass by the target model, shortest first, against the
-   [known exploits](references/hardening.md#known-exploits).
-6. For each failure, quote the first wrong step and name its cause:
+Produce a complete Harbor task in `tasks/<task-name>/`. Exit when the reader answers `PASS` on the instruction, stored cases pass, and the linter exits 0.
 
-| Cause | Next |
-|---|---|
-| Capability | Nothing. This failure is the measurement. |
-| Missing or misleading information | Fix the instruction or the environment. |
-| Tool, service, or setup | Fix the environment. |
-| Verifier wrong in either direction | Fix the verifier, then regrade. |
-| Exploit or leak | Close it and store the run as `exploit-<name>`. |
-| Infrastructure | Rerun it, unscored. |
+### Environment
 
-Also count the runs that stop before checking their work, and the runs that claim success on a wrong result.
+1. Copy [templates/task/](templates/task), the starter Harbor task, to `tasks/<task-name>/`. Replace every starter placeholder as [lay out a task folder](references/environment.md#lay-out-a-task-folder) specifies.
+2. Decide the answer first, then write a seeded generator in `tests/` that builds state forward. A key derived after the fact can be wrong, and hand-patched state can create a second valid answer.
+3. For tasks with prose artifacts, [build structured truth in seeded code first](references/environment.md#build-hybrid-synthetic-data). Generate prose only from allowed facts, and never use unverified model output as ground truth.
+4. Inspect generated sample output before moving on. A generator bug looks identical to a hard task later.
+5. Make every graded fact readable to the solver. A fact stored only in the key reads as a missing capability.
+6. Pin every dependency and reset initial state per trial. Unpinned packages cause drift, and leftover files leak side effects across trials.
+7. Keep real domain friction and decoys with ruling-out evidence, not artificial scale. Unruled decoys create second valid answers, and sheer size tests patience rather than judgment.
+8. Keep [solver and verifier isolation](references/environment.md#isolate-the-solver-from-the-verifier). Shared containers, root access, or open networks let solvers read keys or forge rewards.
+9. When the task needs a service, run it [as root with private state](references/environment.md#run-a-mock-service-the-solver-cannot-edit). Enforce domain rules in the service backend, and never branch backend behavior on task ID or expected answer.
 
-> **Refund task.** The target model failed one of two runs. It called `POST /refunds`, got a 504, and called it again
-> without checking the status. The cause is the capability.
+### Verifier
 
-## 8. Repair
+Write the verifier before the instruction so the instruction derives from the checks. Copy patterns from [references/verifiers.md](references/verifiers.md) into `tests/verifier.py`.
 
-1. Fix the layer that the cause names. Never make a task harder to hide a defect.
-2. Close exploits in the environment. A sentence in the instruction doesn't stop a solver.
-3. Store each finding as a case. A break whose output looks correct, such as reading the key, becomes a preflight line
-   instead.
-4. Make the smallest fix, on the last reviewed version. After a change to the verifier alone, regrade the stored runs
-   instead of running models again.
-5. Log the error in the idea card.
-6. Go back to step 5, and send the hacker again. After three rounds on one defect, redesign the task or drop it.
+1. Keep [the template interface](references/verifiers.md#keep-the-template-interface). Stored cases, the linter, and the run summarizer depend on `grade()`, `grade.json`, and `hardening=False`.
+2. Grade saved final state and snapshot untouched collateral state. Checking only target fields passes solvers that cause harm elsewhere.
+3. Decompose requirements into independent binary checks. Binary checks produce deterministic verdicts and expose partial progress without subjective rating scales.
+4. Bind parsed values to roles, canonicalize unordered rows or keys, and match boundary operators and rounding to `instruction.md`. Rigid order checks reject valid work, while unbound values pass swapped answers.
+5. Record method checks only as `diag_`. Grading trajectories rejects valid alternative solutions.
+6. [Isolate submitted code](references/environment.md#isolate-submitted-code) outside the grader process. When tests are visible, [perturb hidden test inputs](references/environment.md#perturb-inputs-when-the-solver-sees-the-tests). Code inside the grader can forge its own exit code, and visible tests invite memorization.
+7. Use code for counts, IDs, values, and order. When code cannot grade a requirement, follow [references/judges.md](references/judges.md) for isolated binary judges instead of generic metrics.
+8. [Separate verifier errors from solver failures](references/verifiers.md#handle-errors-one-way). Bad solver output scores 0 on a named check, while a judge or tool failure exits nonzero with no reward.
+9. Give every check an ID and a comment naming the shortcut or defect it blocks. An unnamed guard protects against nothing you have verified.
 
-> **Refund task.** The service now owns the order database, the verifier gains a `charges_unchanged` check, and the
-> hacker's run becomes the stored case `exploit-delete-charge`.
+### Instruction
 
-## 9. Make it harder
+1. Edit `instruction.md` so every check maps to a sentence and every sentence maps to a check. An unstated rule fails competent solvers, and an unchecked rule is free to ignore.
+2. State exact paths, formats, units, tolerances, tool or dialect versions, and limits from `task.toml`. State outcomes, never methods, because dictating steps lets solvers pass without the capability.
+3. For coding tasks, declare exact editable files or allow scratch tests outside graded paths. Solvers must be able to test their own fix without failing scope checks.
+4. Omit a rule only when discovering that rule is the capability. Ensure an action in the environment reveals it.
+5. Send [templates/reader-brief.md](templates/reader-brief.md), the alignment-review prompt, with `<job folder>` set to `none`. On `REVISION_REQUIRED`, fix the named mismatches and send a new reader before writing stored cases.
 
-Do this only when the target model passes every run.
+### Reference solution and stored cases
 
-1. Turn the knob one step. Ask for more judgment, such as a closer decoy, a stale fact to refetch, or a check before
-   an irreversible action. Never add only size, noise, or a tighter clock.
-2. Keep the verifier the same. If the harder version needs a new claim, it is a new task.
-3. Keep the easier version. A task that no model passes needs an easier version that some model passes, or a wrong
-   key looks like a hard task.
+1. Finish `solution/solve.sh` to perform the real work, then [run it in the built image](references/harbor.md#run-the-reference-solution). A verified reference execution catches impossible specs and broken tools before any model runs.
+2. [Store bidirectional cases](references/verifiers.md#stored-cases) covering passing, alternative, empty, malformed, near-miss, side-effect, and shortcut outputs. A verifier tested only on passes never proves it rejects bad work.
+3. Run `pytest` on `tests/`. When `--container-verifier` is required, run stored cases inside the verifier container. Run [scripts/lint_task.py](scripts/lint_task.py), the static isolation and format checker, on `tasks/<task-name>/`. Fix every failure before Phase 3.
 
-> **Refund task.** Easier: the status reads "pending" for 0 seconds. Base: 5 seconds. Harder: 10 seconds, so an agent
-> that retries on "pending" refunds twice.
+## Phase 3. Verify
 
-## 10. Measure and report
+Confirm the task is solvable, sealed, and free of non-capability failures before measuring. Exit when free checks pass, no hidden files leak, the auditor scores 1, and the hacker finds no break. Every remaining model failure must be a capability failure.
 
-1. Freeze the task: commit it, pin its images and harness, and stop editing.
-2. Run each model fresh, at least 10 runs per task.
-3. Count the runs with [summarize_runs.py](scripts/summarize_runs.py) `--first 10 --json`.
-4. Compute the intervals with [probe_odds.py](scripts/probe_odds.py): `wilson` for one task, `set` for several, and
-   `paired` to compare two models or two versions.
-5. Write the report in the format in [harbor.md](references/harbor.md#write-the-report): the setup, the pass rate with
-   its interval, pass@k and pass^k, the partial score, cost, early stops, false success claims, the empty answer's
-   score, and what the task leaves untested.
+1. Run [scripts/verify_task.py](scripts/verify_task.py), the task verification runner, with `doctor` and `free` in [harbor.md order](references/harbor.md#run-free-checks). `free` runs [scripts/preflight_agent.py](scripts/preflight_agent.py), the preflight Harbor agent, plus oracle and empty baselines. An oracle pass proves solvability, and an empty fail proves untouched state cannot pass.
+2. Fix every failed or skipped row in `summary.md`. Run the printed smoke command once to confirm model connectivity.
+3. [Search the built image for hidden files](references/environment.md#search-for-leaks). Preflight checks only `/tests` and `/solution`, so keys copied elsewhere pass `free`.
+4. [Open a solver shell](references/harbor.md#open-a-solver-shell) and send [templates/auditor-brief.md](templates/auditor-brief.md), the blind-solve prompt. Score the auditor output. A wrong key looks identical to a hard task until an agent without the key solves it.
+5. Open a separate solver shell and send [templates/hacker-brief.md](templates/hacker-brief.md), the adversarial audit prompt. Hostile testing catches loopholes before models exploit them. Send any auditor issue or hacker break to Phase 4.
+6. [Run models](references/harbor.md#run-models) starting with a cheap model, then two or three models of varying strength including the target. Hold out one strong non-target model until Phase 5 so you do not tune to it.
+7. Summarize trials with [scripts/summarize_runs.py](scripts/summarize_runs.py), the trial accounting script. Read every passing trace, shortest and fastest first, against [known exploits](references/environment.md#known-exploits). Pass-rate ordering alone never proves validity, because fast passes and weak-model wins can hide shortcuts.
+8. For each failure, quote the first upstream wrong step because downstream errors cascade from it. Classify the failure as `capability`, `information`, `setup`, `verifier`, `exploit`, or `infrastructure`. Rerun `infrastructure` unscored, and send every other non-capability cause to Phase 4.
+9. If independent models fail alike or strong models score 0 across runs, suspect the task. [Regrade](references/harbor.md#regrade-without-model-calls) with a scratch verifier accepting their shared reading. If they pass, send the reader with `<job folder>` set to the job and repair in Phase 4.
+10. If the task uses a model judge, [run three-way judge calibration](references/judges.md#calibrate-a-judge) before Phase 5. Overall agreement hides one-sided errors on skewed outputs.
+11. If the target model passes every run validly, stop before Phase 5. [Raise difficulty](#raise-difficulty) on a copy or keep the task as a regression check.
+12. Once variant one exits Phase 3 cleanly, build and verify each planned control and abstain variant before Phase 5.
 
-Once the target models pass every run, keep the task as a regression check, not a capability measure.
+## Phase 4. Repair
+
+Fix one defect cleanly without drifting the task. Exit when every gate from the earliest changed Build sub-stage through Phase 3 passes again.
+
+| Failure cause | Owning layer | Repair action |
+|---|---|---|
+| `information` | Phase 2 Instruction | Clarify wording, format, unit, version, or discoverable rule |
+| `setup` or wrong key | Phase 2 Environment | Fix generator, dependencies, tools, or service setup |
+| `verifier` | Phase 2 Verifier | Fix parsing, normalization, tolerance, or scope check |
+| `exploit` | Phase 2 Environment or Verifier | Close with isolation, preflight line, or verifier check |
+
+1. Make the smallest change in the owning layer. Fixing a prompt to hide an exploit leaves the hole open, and rewriting the whole task drifts its claim.
+2. Store every defect or exploit as a regression case in `tests/cases/`. When an exploit produces valid output, add a preflight check instead. Without a stored check, later edits reopen closed flaws.
+3. Log the defect, discovery method, affected versions, and score comparability in `work/<task-name>/idea-card.md`. Changing preinstalled packages changes the evaluation condition. Whenever grading logic changes, bump `VERSION` in `tests/verifier.py`, because two verifier versions cannot share a table.
+4. Re-pass every gate from the earliest changed Build sub-stage through Phase 3. If only the verifier changed, [regrade stored runs](references/harbor.md#regrade-without-model-calls) instead of rerunning models. After three failed rounds on one defect, restart at Phase 1 or drop the task and record why.
+
+## Phase 5. Measure
+
+Produce a frozen commit and `work/<task-name>/report.md`. Exit when frozen `free` passes, fresh trials finish, and the report contains every required item.
+
+1. [Freeze the task](references/harbor.md#freeze-the-task) with pinned image digests, exact versions, a clean `free` pass, and a commit. Tuning runs overstate scores, so measure only on fresh frozen runs.
+2. Write the keep rule in `work/<task-name>/idea-card.md` as a pass range before measuring. Check its error rates with [scripts/probe_odds.py](scripts/probe_odds.py), the statistical interval and rule calculator. Picking thresholds after seeing scores lets noise select the task.
+3. Run at least 10 fresh trials per task for each model, including the held-out model. [Rerun infrastructure failures](references/harbor.md#rerun-infrastructure-failures) unscored, because counting outages as zeros understates capability.
+4. Count the first clean runs with `summarize_runs.py` and `probe_odds.py`, then [write `work/<task-name>/report.md`](references/harbor.md#count-and-report). Scores measure the model and agent CLI pair together, so decide from confidence intervals rather than point estimates.
+5. Apply the keep rule. If scores sit above the range, keep the task as a regression check. Then [raise difficulty](#raise-difficulty) on a copy. If scores sit below the range, weaken one condition on a copy and pass Phases 2 and 3. Retire or refresh leaked or ceiling tasks while keeping a small fixed companion subset to track suite progress.
+
+### Raise difficulty
+
+Raise difficulty only on a fair task that the target passes cleanly. Never raise difficulty to hide a defect. Copy the task folder and keep the easier task, because a task no model passes makes a wrong key look hard.
+
+In the generator, harden one domain condition such as a closer decoy or a stale record. Keep the verifier unchanged. If a change requires a new claim, start a new task at Phase 1. Regenerate data and key, update `solve.sh` and stored cases, and pass Phases 2 and 3.
