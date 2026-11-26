@@ -1,4 +1,4 @@
-"""skills/eval-factory: crash accounting, refusals, decoys and first attempts in summarize_runs."""
+"""missions/eval-factory/.agents/skills/eval-factory: crash accounting, refusals, decoys and first attempts in summarize_runs."""
 import json
 
 from summarize_runs import summarize

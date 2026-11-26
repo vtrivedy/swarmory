@@ -1,0 +1,10 @@
+[[agent]]
+harness = "claude-code"
+model = "claude-opus-5-5"
+count = 2
+role = "Build tasks, each on its own issue, through every phase of the eval-factory skill."
+
+[[agent]]
+harness = "codex"
+model = "gpt-6.1-sol"
+role = "Review tasks you didn't build as critic, reader, auditor, or hacker, using the eval-factory briefs, and report each finding on the task's issue."

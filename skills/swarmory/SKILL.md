@@ -366,6 +366,8 @@ Other `start` options:
 - `--allow HOST` lets agents on Modal reach `HOST`.
 - `--jobs` lets agents run Harbor evals with `swarmory job harbor`. Give them the `running-harbor-jobs` skill as above.
   On Modal the person also creates the secret `swarmory-modal` with `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
+  For a mission that builds evals, copy `missions/eval-factory` from the swarmory repo. Its skills are in
+  `.agents/skills/`. To test another capability, change its BRIEF.md title, bold line, and number of tasks.
 
 ## Steer the run, then improve the next one
 

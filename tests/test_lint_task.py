@@ -1,5 +1,5 @@
-"""skills/eval-factory/scripts/lint_task.py: a sealed task passes, and each isolation or grading break
-fails."""
+"""missions/eval-factory/.agents/skills/eval-factory/scripts/lint_task.py: a sealed task passes, and each isolation
+or grading break fails."""
 import json
 
 from lint_task import main
@@ -24,6 +24,9 @@ environment_mode = "separate"
 }
 
 SEALED = {"sealed"}  # what a sealed task refuses
+JUDGE = ('environment_mode = "separate"\n[verifier.environment]\nnetwork_mode = "allowlist"\n'
+         'allowed_hosts = ["judge.example"]\n[verifier.env]\nKEY = "${KEY}"\n'
+         '[metadata]\nverifier_kind = "rubric judge"')
 BREAKS = [  # (the checks that fail, the file, the text replaced, its replacement)
     ({"verifier_separate"}, "task.toml", 'environment_mode = "separate"', 'environment_mode = "shared"'),
     ({"agent_user"}, "task.toml", 'user = "agent"', 'user = "root"'),
@@ -34,6 +37,7 @@ BREAKS = [  # (the checks that fail, the file, the text replaced, its replacemen
     (SEALED, "task.toml", 'environment_mode = "separate"',
      'environment_mode = "separate"\n[verifier.environment]\nnetwork_mode = "public"'),
     (SEALED, "task.toml", 'environment_mode = "separate"', 'environment_mode = "separate"\n[verifier.env]\nK = "${K}"'),
+    (SEALED, "task.toml", 'environment_mode = "separate"', JUDGE + '\n[agent.env]\nK = "${K}"'),  # judge: verifier only
     ({"solver_network_narrow", *SEALED}, "task.toml", '[environment]\nnetwork_mode = "no-network"',
      'environment = "no-network"'),
     ({"image_has_no_task_files"}, "environment/Dockerfile", "USER agent", "COPY . /app\nUSER agent"),
@@ -63,5 +67,7 @@ def test_a_sealed_task_passes_and_each_break_fails_only_its_check(tmp_path, caps
         assert failed(capsys, write_task(tmp_path / str(i), files)) == (1, checks)
     files = dict(TASK, **{"tests/docker-compose.yaml": "services: {}\n"})  # a separate verifier's
     assert failed(capsys, write_task(tmp_path / "composed", files)) == (1, SEALED)
+    files = dict(TASK, **{"task.toml": TASK["task.toml"].replace('environment_mode = "separate"', JUDGE)})
+    assert failed(capsys, write_task(tmp_path / "judge", files)) == (0, set())
     files = {k: v for k, v in TASK.items() if k != "tests/Dockerfile"}
     assert failed(capsys, write_task(tmp_path / "no-verifier-image", files)) == (1, {"verifier_dockerfile"})

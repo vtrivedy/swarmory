@@ -5,9 +5,10 @@ description: How a swarmory run's Harbor jobs flow, from a finished task folder 
 
 # Running Harbor jobs
 
-A run started with `--jobs` runs Harbor for you. You never run `harbor`, `docker` or `modal` yourself. You hold no
-Modal token and no model key. Where another skill, such as create-task, rewardkit or eval-factory, shows a
-`harbor run`, `harbor task init` or `docker` command, this skill takes precedence in a swarmory run.
+A run started with `--jobs` runs Harbor for you. You never run `harbor`, `docker` or `modal` yourself, except
+`harbor datasets list`. You hold no Modal token and no model key. Where another skill, such as create-task, rewardkit
+or eval-factory, shows a `harbor run`, `harbor task init` or `docker` command, this skill takes precedence in a
+swarmory run.
 
 ## The job flow
 
@@ -41,19 +42,18 @@ These need no Harbor, Docker or Modal:
 
 - The task's own tests, such as `pytest tests -q -p no:cacheprovider` in the task folder, with the Python the mission
   set up (`harbor-python` in the eval-factory mission).
-- The lint: `python3 <eval-factory skill>/scripts/lint_task.py PATH`. Its `swarmory_job_sealed` row says whether the
-  server will accept the task.
+- The lint: `python3 <eval-factory skill>/scripts/lint_task.py PATH`. Its `sealed` row says whether the server
+  will accept the task's network settings. A model-judge verifier passes the lint, but the server refuses it.
 - The task's own scripts, such as `tests/verifier.py` on a stored case or `solution/solve.sh` against a copy of the
   starting files.
 
 Then let the oracle and nop jobs prove the task through Harbor.
 
-## Folder jobs and arm jobs
+## Folder jobs
 
 PATH is one task folder, or a folder whose subfolders are tasks. A folder job runs every task in one job, and its
 trials run at the same time: attempts times tasks, at most 8 at once. `--attempts` takes any whole number from 1.
-Check oracle and nop on all arms of a task with one folder job each, not one job per arm. Use an arm job when only
-that arm changed.
+Run one job per variant folder, and rerun only the variant that changed.
 
 ## Custom harnesses
 

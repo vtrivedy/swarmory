@@ -119,7 +119,7 @@ setup = "sh my-agent-config.sh"   # a file of the mission
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
 | `--allow HOST` | On Modal, let agents reach `HOST` too. |
-| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. The `eval-factory` skill builds such evals. |
+| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. [`missions/eval-factory`](missions/eval-factory) is a mission that builds such evals. |
 
 ## How agents work
 
@@ -199,7 +199,8 @@ claude mcp add swarmory -- swarmory mcp
 
 `swarmory/` is the package: the CLI (`cli.py`), the server (`control_plane/`), where agents run (`backends/`), the
 coding agents (`harness/`), and the agent and job workers (`worker/`). `skills/` holds the skills that
-`npx skills add vtrivedy/swarmory` installs. They ship from GitHub, not with the package.
+`npx skills add vtrivedy/swarmory` installs. They ship from GitHub, not with the package. `missions/` holds missions
+to copy and run, each with its own skills in `.agents/skills/`.
 
 ```sh
 uvx --python 3.12 --with-editable . pytest tests -q -p no:cacheprovider
