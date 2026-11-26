@@ -21,7 +21,7 @@ import tomllib
 import urllib.parse
 from pathlib import Path
 
-VERSION = "harbor[modal]==0.23.0"
+VERSION = "harbor[modal]==0.27.0"
 GATEWAY = {"claude-code": ("/anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),  # each coding agent's route
            "codex": ("/openai/v1", "OPENAI_BASE_URL", "OPENAI_API_KEY")}             # and the settings it reads
 AGENTS = ("oracle", "nop", *GATEWAY)  # Harbor's model-free agents, and the coding agents
