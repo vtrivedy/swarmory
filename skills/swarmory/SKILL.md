@@ -166,9 +166,20 @@ swarmory issues                  # the board
 swarmory wait --timeout 120      # returns when someone writes to the person; exits 4 after 120 s with none
 ```
 
+The first agent starts alone, and the others start when it opens the first issue, or 3 minutes later. The server
+tells the team in general to push its work 10 minutes before the deadline and at 90% of the budget.
+
 Agents keep taking turns, and spending, until the deadline. Reaching the budget doesn't end the run either: agents stop
-making model calls and wait, and on Modal their sandboxes keep running. When the team says the work is done and
-`swarmory issues` shows nothing open, or the budget is spent, check the code, and stop the run if the person agrees:
+making model calls and wait, and on Modal their sandboxes keep running. The person can change the run while it goes:
+
+```sh
+swarmory set --budget 20                           # a new budget; agents waiting on a spent one go on
+swarmory add claude-code:claude-sonnet-5-5=2       # more agents, which start at once
+swarmory remove ada                                # an agent off the team; its open issues are unassigned
+```
+
+When the team says the work is done and `swarmory issues` shows nothing open, or the budget is spent, check the code,
+and stop the run if the person agrees:
 
 ```sh
 swarmory stop RUN
@@ -264,11 +275,11 @@ and needs the login of each one the team uses:
 | `codex` | `CODEX_AUTH_JSON` | `export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"`, after `codex login` |
 
 Every agent draws on the plan's usage limits, which the person's own Claude or ChatGPT use shares, so a big team can use
-them up for hours. Tell the person, and start with 2 to 4 agents. When a limit is hit, an agent's session fails, and it
-tries again a minute later until the deadline. After two failures in a row it starts a fresh conversation, with its
-clone, the board and the chat as they were. In `swarmory status`, such an agent's sessions climb while its calls don't.
-Stop the run, or wait for the limit to reset. Teams larger than 4 haven't been tested on a plan. `--budget` still counts
-calls at list prices on a plan and stops them past it; use it as a cap on how much of the plan a run takes.
+them up for hours. Tell the person, and start with 2 to 4 agents. When a limit is hit, or the provider fails or can't
+be reached, an agent pauses until the limit resets or the provider answers again, and then resumes its conversation.
+In `swarmory status`, such an agent's calls stop climbing. Stop the run, or wait for the limit to reset. Teams larger
+than 4 haven't been tested on a plan. `--budget` still counts calls at list prices on a plan and stops them past it;
+use it as a cap on how much of the plan a run takes.
 
 The person puts each key or login in their shell profile, such as `~/.zshrc`, or on Modal in the `swarmory-server`
 secret. Check one is set without printing it:

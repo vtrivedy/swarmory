@@ -152,8 +152,8 @@ def test_a_provider_limit_pauses_the_agent_until_it_resets_and_keeps_its_convers
     a.live()
     # the second pause in a row backs off past the expired limit
     assert a.run.asked == ["next"] and 590 < naps[0] <= 600 and naps[1:] == [2 * agent.RETRY]
-    assert prompts[1].startswith("Since your last turn:") and all(p == "Your last session stopped at a provider limit, which has reset.\n\n" + prompts[1]
-               for p in prompts[2:])
+    resumed = "Your last session stopped when the model provider limited or failed its calls. That has passed.\n\n"
+    assert prompts[1].startswith("Since your last turn:") and all(p == resumed + prompts[1] for p in prompts[2:])
 
 
 def test_a_session_that_exits_0_with_no_model_answer_failed(monkeypatch, tmp_path):

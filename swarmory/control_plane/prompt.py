@@ -10,6 +10,8 @@ from swarmory import harness
 from .jobs import git
 from .team import IDLE
 
+STAGGER = 180  # seconds the first agent works alone, unless it opens an issue sooner: the others start on its plan
+
 SKILLS = ".agents/skills"  # a mission's skills, where `npx skills add` puts them
 TEMPLATE = Path(__file__).resolve().parents[1] / "worker" / "prompt.md"
 BLOCK = ("|", ">", "|-", ">-", "|+", ">+")  # YAML's markers of a value on the indented lines below its key
@@ -73,10 +75,11 @@ def skill_list(skills: list) -> str:
                         for folder, name, about in skills) + "\n\n")
 
 
-def prompt(config: dict, member: dict, brief: str, skills: list, backend: str, hosts: tuple, jobs: str) -> str:
+def prompt(config: dict, member: dict, brief: str, skills: list, backend: str, hosts: tuple, jobs: str,
+           lead: bool = False) -> str:
     """One agent's starting prompt. `backend` is where workers run (local or modal), `hosts` what an agent on Modal
-    reaches, and `jobs` the run's section on jobs (Jobs.guide), or ""."""
-    agents = [m for m in config["members"] if m["kind"] == "agent"]
+    reaches, `jobs` the run's section on jobs (Jobs.guide), or "", and `lead` whether it starts before the others."""
+    agents = [m for m in config["members"] if m["kind"] == "agent" and not m.get("removed")]
     roster = [f"- {a['name']} ({a['id']}), {a['harness']}" + (f". Role: {a['role']}" if a.get("role") else "")
               for a in agents]
     op = config["operator"]
@@ -89,4 +92,7 @@ def prompt(config: dict, member: dict, brief: str, skills: list, backend: str, h
         hooks=" Messages for you also arrive between your tool calls, marked [swarmory]."
         if harness.of(member).hooks else "",
         skills=skill_list(skills), jobs=jobs, brief=brief.rstrip("\n"),
+        lead=f"You start first. Your teammates start when you open the first issue, or {STAGGER // 60} minutes after "
+        "you start. Split the work into issues before you start on any of it, so they find it split.\n\n"
+        if lead else "",
         nojobs="" if config.get("jobs") else " This run has no jobs, so the server refuses `swarmory job`.")

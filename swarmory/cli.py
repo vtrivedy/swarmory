@@ -84,6 +84,10 @@ swarmory start MISSION [--team HARNESS[:MODEL]=N]... [--hours H] [--budget USD] 
                                          With no server at your login, it starts one here (`swarmory serve`) first
 swarmory use RUN                         act in RUN: `swarmory send`, `swarmory read` and the rest
 swarmory runs  ·  swarmory status [RUN]  ·  swarmory stop [RUN]
+swarmory set --budget USD|none           change the run's budget; the team hears it
+swarmory add HARNESS[:MODEL][=N]...      add agents to the run's team; they start at once
+swarmory remove ID...                    take agents off the run's team; their open issues are unassigned
+                                         set, add and remove act in the login's run, or in --run RUN
 swarmory export [RUN] [DIR]              the run's records, unpacked into DIR/RUN (default .), for tools/report.py
 swarmory serve [--data DIR] [--port N]   run the server, which holds every run; it needs SWARMORY_OPERATOR_TOKEN set
 swarmory deploy                          deploy the server to Modal, with its agent image and its job image
@@ -104,7 +108,9 @@ COMMANDS = {
     # any other --PARAM VALUE of `swarmory job` is Harbor's, which the server checks
     "job": (1, 2, ("--hours=", "--budget=", "--to=", "--mine")), "results": (1, 1, ()), "spend": (0, 0, ()),
     "use": (1, 1, ()), "runs": (0, 0, ()), "status": (0, 1, ()), "stop": (0, 1, ()), "export": (0, 2, ()),
+    "set": (0, 0, ("--run=", "--budget=")), "add": (1, None, ("--run=",)), "remove": (1, None, ("--run=",)),
 }
+OPERATOR = ("use", "runs", "status", "stop", "export", "set", "add", "remove")  # on the server, not in a run
 FIELD = {"--all": "all", "--limit": "limit", "--reply": "reply_to", "--about": "about", "--mine": "mine",
          "--status": "status", "--body": "body", "--assign": "assignees", "--why": "why",
          "--if-unassigned": "if_unassigned"}
@@ -575,14 +581,15 @@ def serve_here(url, token):
         time.sleep(0.5)
 
 
-def parse_team(specs: list) -> list:
-    """--team HARNESS[:MODEL]=N, repeated, as the start verb's team: one entry per agent, in order."""
+def parse_team(specs: list, one: bool = False) -> list:
+    """--team HARNESS[:MODEL]=N, repeated, as the start verb's team: one entry per agent, in order. With `one`, =N
+    may be left out, for one agent."""
     team = []
     for spec in specs:
-        m = re.fullmatch(r"([\w-]+)(?::([^=\s]+))?=(\d+)", spec)
+        m = re.fullmatch(r"([\w-]+)(?::([^=\s]+))?(?:=(\d+))" + ("?" if one else ""), spec)
         if not m:
-            fail("--team %r: want HARNESS[:MODEL]=N, such as claude-code=2" % spec)
-        team += [{"harness": m[1], "model": m[2]}] * int(m[3])
+            fail("%r: want HARNESS[:MODEL]%s, such as claude-code=2" % (spec, "[=N]" if one else "=N"))
+        team += [{"harness": m[1], "model": m[2]}] * int(m[3] or 1)
     return team
 
 
@@ -698,9 +705,9 @@ def start(argv):
 
 
 def operator(cmd, pos, opts):
-    """use, runs, status, stop and export, on the server at the login. But for runs, each takes a run: the one named,
-    or the login's."""
-    rid = pos[0] if pos else saved().get("run")
+    """OPERATOR's commands, on the server at the login. But for runs, each takes a run: the one named, or the
+    login's."""
+    rid = opts.get("--run") or (pos[0] if pos and cmd not in ("add", "remove") else None) or saved().get("run")
     if cmd != "runs" and not rid:
         usage("%s takes RUN" % cmd)
     url, token = server()
@@ -716,6 +723,15 @@ def operator(cmd, pos, opts):
         with tarfile.open(fileobj=io.BytesIO(data)) as tar:
             tar.extractall(into, filter="data")
         r = {"data": {"path": str(into / rid)}, "text": str(into / rid)}
+    elif cmd == "set":
+        if "--budget" not in opts:
+            usage("say what to set: --budget USD, or --budget none")
+        budget = None if opts["--budget"].lower() == "none" else number(opts["--budget"], "--budget")
+        r = fetch(url, "/api/set", token, {"run": rid, "budget": budget})
+    elif cmd == "add":
+        r = fetch(url, "/api/add", token, {"run": rid, "team": parse_team(pos, one=True)})
+    elif cmd == "remove":
+        r = fetch(url, "/api/remove", token, {"run": rid, "members": pos})
     else:
         r = fetch(url, "/api/" + cmd, token, {} if cmd == "runs" else {"run": rid})
     show(r, opts)
@@ -744,6 +760,7 @@ def mcp():
     start["properties"]["team"]["description"] += " (default: the mission's team.toml, else two of the first harness)"
     tools["start"]["description"] += (" Here it also starts a local server when none answers at the login, pushes the "
                                       "mission folder as main, and makes the run the login's.")
+    tools["set"]["inputSchema"]["properties"]["budget"]["type"] = ["number", "null"]  # null: no limit
     tools["send"]["inputSchema"]["properties"]["files"]["description"] = "paths of files on this machine to attach"
     tools["job"]["description"] += (" Nothing is pushed for you here: the commit, with the folder at path in it, must "
                                     "already be pushed to the run's repo.")
@@ -820,7 +837,7 @@ def command(argv):
     if len(pos) < lo or (hi is not None and len(pos) > hi):
         usage("wrong number of arguments for `swarmory %s`" % cmd)
     code = 0
-    if cmd in ("use", "runs", "status", "stop", "export"):
+    if cmd in OPERATOR:
         return operator(cmd, pos, opts)
     elif cmd == "login":
         r = login(pos)

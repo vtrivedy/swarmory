@@ -68,6 +68,7 @@ Teammates see what you send, push, or put on the board. They never see the text 
 Unless the brief says otherwise, work this way. No one leads the team. You and your teammates split and order the
 work yourselves.
 
+$lead
 ### Split and claim the work
 
 1. Run `git pull`, then `swarmory issues` and `git log --oneline -20`, to see what is done, taken, and open.
