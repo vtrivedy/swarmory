@@ -5,6 +5,7 @@ is the order everyone sees.
 No HTTP here. verbs.py calls one method per verb, each taking the caller's member id and the request dict and returning
 the response dict. A ValueError means a bad request. NotFound means an unknown conversation, channel or issue."""
 import hmac
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from swarmory import HOLD
 
+from .pieces import Pieces, Route
 from .policy import sha
 
 MENTION = re.compile(r"(?<![\w@])@([A-Za-z][\w-]*)")
@@ -30,6 +32,46 @@ SYSTEM = "swarmory"  # the author of what the server posts itself, such as a job
 
 class NotFound(Exception):
     pass
+
+
+class Lock:
+    """The team's lock, which the thread that holds it may take again: the server holds it over a vote and the verb
+    the vote is about, and the verb takes it as it always has. A Condition can wait on it."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self._is_owned, self._release_save = self.lock._is_owned, self.lock._release_save
+        self._acquire_restore = self.lock._acquire_restore
+        self.acquire, self.release = self.lock.acquire, self.lock.release
+
+    def __enter__(self):
+        return self.lock.__enter__()
+
+    def __exit__(self, *a):
+        return self.lock.__exit__(*a)
+
+    def locked(self) -> bool:
+        """This thread holds it."""
+        return self._is_owned()
+
+
+@dataclass(frozen=True)
+class Draft:
+    conv: str
+    author: str
+    text: str
+    mentions: list
+    reply_to: str = None
+
+
+@dataclass(frozen=True)
+class Turn:
+    who: str
+    now: float
+    since: float
+    mail: list
+    heard: float
+    end: float
 
 
 def string(req: dict, key: str, most: int, need: bool = True):
@@ -81,11 +123,13 @@ def activity(ev: dict) -> str:
 
 
 class Team:
-    def __init__(self, data, also=None):
+    def __init__(self, data, also=None, pieces=None):
         """`also` applies the events this file does not know, live and on replay: jobs.py's."""
         self.dir, self.also = Path(data), also
         config = json.loads((self.dir / "config.json").read_text())
-        self.lock = threading.Lock()
+        self.pieces = pieces or Pieces(config.get("pieces", ()), config.get("drop", ()), config.get("piece"))
+        self.state = {}   # piece name -> what its apply() keeps
+        self.lock = Lock()
         self.bells = defaultdict(lambda: threading.Condition(self.lock))  # member -> what its wait() holds on
         self.seq = self.mcount = self.icount = self.fcount = 0
         self.members, self.channels, self.board, self.messages = {}, {}, {}, {}
@@ -189,10 +233,13 @@ class Team:
             self.also(ev)
         if ev.get("nonce"):
             self.nonces[(ev.get("author") or ev["by"], ev["nonce"])] = ev
+        self.pieces.every("apply", self, ev)
 
     def apply_message(self, ev: dict):
         m = {k: ev[k] for k in ("id", "seq", "conv", "author", "text", "reply_to", "mentions", "activity", "at")}
         m["files"] = ev.get("files", [])
+        if ev.get("audience") is not None:
+            m["audience"] = ev["audience"]
         for f in m["files"]:
             self.shared.setdefault(f["id"], set()).add(m["conv"])
         self.mcount = max(self.mcount, int(m["id"][1:]))
@@ -285,16 +332,25 @@ class Team:
         return [x for x, m in self.members.items() if x != author and not m.get("removed") and (
             x in mentions or "all" in mentions or x in here or x == replied or issue and x in issue["subscribers"])]
 
+    def agent(self, x: str) -> bool:
+        m = self.members.get(x)
+        return bool(m) and m["kind"] == "agent"
+
     def post(self, conv: str, author: str, text: str, reply_to, nonce, change: dict = None, files=(),
-             quiet: bool = False) -> dict:
+             quiet: bool = False, route=None) -> dict:
         """A message, or with `change` the activity line of that board change. The line also tells whom the change
         unassigned and whom a new issue's body @mentions. A quiet message is an activity line for no one."""
         told = (change.get("body") or " ".join("@" + x for x in change.get("remove", ()))) if change else ""
         mentions = [] if quiet else self.mentions(text + "\n" + told)
+        owner = self.pieces.owned("route")
+        r = route or (Route([]) if quiet else self.pieces.choose(
+            "route", self.agent(author), self, Draft(conv, author, text, mentions, reply_to)))
+        to = [x for x in r.to if r.audience is None or x in r.audience]
         ev = self.append({"type": "message", "id": f"m{self.mcount + 1}", "conv": conv, "author": author,
                           "text": text, "reply_to": reply_to, "mentions": mentions, "activity": bool(change) or quiet,
-                          "nonce": nonce,
-                          "recipients": [] if quiet else self.addressed(conv, author, mentions, reply_to),
+                          "nonce": nonce, "recipients": to,
+                          **({"audience": list(r.audience)} if r.audience is not None else {}),
+                          **({"held": list(r.held), "route": owner} if r.held else {}),
                           **({"files": [self.files[f] for f in files]} if files else {})})
         return self.messages[ev["id"]]
 
@@ -304,6 +360,12 @@ class Team:
         self.post(ev["id"], ev.get("author") or ev["by"], activity(ev), None, None, ev)
         return {"issue": self.issue_view(ev["id"])}
 
+    def may_read(self, x: str, m: dict) -> bool:
+        """The one rule for every read: not a DM between two others, and in the message's audience if it has one."""
+        if self.members[x].get("operator"):
+            return True
+        return not self.hidden(x, m["conv"]) and (m.get("audience") is None or x == m["author"] or x in m["audience"])
+
     def sees(self, x: str, m: dict) -> bool:
         """m is in x's world: x wrote it, it is for x, or it's in a channel or an issue x is in."""
         where = self.channels.get(m["conv"]) or {}
@@ -312,7 +374,8 @@ class Team:
                 or x in issue.get("subscribers", ()))
 
     def unread(self, x: str, m: dict) -> bool:
-        return m["author"] != x and m["seq"] > self.marks.get((x, m["conv"]), 0) and self.sees(x, m)
+        return (m["author"] != x and m["seq"] > self.marks.get((x, m["conv"]), 0) and self.sees(x, m)
+                and self.may_read(x, m))
 
     def undelivered(self, x: str) -> list:
         """The messages for x that no turn or delivery has shown, less those x has read."""
@@ -381,7 +444,7 @@ class Team:
             conv = self.resolve(who, req["conv"]) if req.get("conv") else None
             pool = self.convs.get(conv, []) if conv else self.order
             if req.get("all"):  # a look back at history, which leaves the read marker where it is
-                return {"messages": [m for m in pool if not self.hidden(who, m["conv"])][-limit:], "more": 0}
+                return {"messages": [m for m in pool if self.may_read(who, m)][-limit:], "more": 0}
             unread = [m for m in pool if self.unread(who, m)]
             got, more = unread[:limit], max(0, len(unread) - limit)
             upto = {m["conv"]: m["seq"] for m in got}  # ascending, so the last one per conv is its highest
@@ -469,7 +532,7 @@ class Team:
     def issue(self, who: str, req: dict) -> dict:
         with self.lock:
             i = self.find_issue(req)
-            return {"issue": self.issue_view(i), "messages": list(self.convs.get(i, []))}
+            return {"issue": self.issue_view(i), "messages": [m for m in self.convs.get(i, []) if self.may_read(who, m)]}
 
     def new(self, who: str, req: dict) -> dict:
         title, nonce = string(req, "title", 200).strip(), string(req, "nonce", 64, False)
@@ -611,21 +674,28 @@ class Team:
             return self.news(who, main)
 
     def next(self, who: str, req: dict, gone=lambda: False, head=lambda: None) -> dict:
-        """An agent's worker, between two turns: the next turn starts at once, unless the agent waits; then on a
-        message for it, or IDLE seconds after it began to wait. Holds up to req's timeout (at most HOLD seconds), then
-        answers {"done": false}; call again."""
-        end, ticket = time.time() + number(req, "timeout", HOLD, 0, HOLD), None
+        """An agent's worker, between two turns: the next turn starts when the run's turns piece says (start_at).
+        Holds up to req's timeout (at most HOLD seconds), then answers {"done": false}; call again."""
+        end = time.time() + number(req, "timeout", HOLD, 0, HOLD)
         with self.lock:
-            if who in self.waiting:
-                start = self.waiting[who] + IDLE
-                if not self.hold(who, min(end, start), gone) and time.time() < start:
+            ticket = self.holds[who] = object()
+            self.bells[who].notify_all()  # an older call still held ends
+            heard = None
+            while True:
+                mail, now = self.undelivered(who), time.time()
+                heard = (heard or now) if mail else None
+                at = self.pieces.choose("start_at", True, self, Turn(who, now, self.waiting.get(who), mail, heard, end))
+                if self.holds[who] is not ticket:
                     return {"done": False}
-                ticket = self.holds.get(who)
+                if at is not None and now >= at:
+                    if gone():
+                        return {"done": False}
+                    break
+                if now >= end:
+                    return {"done": False}
+                self.bells[who].wait(min(at or end, end) - now)
         main = head()
         with self.lock:
-            if ticket is not None and (self.holds.get(who) is not ticket or gone()):
+            if self.holds.get(who) is not ticket or gone():
                 return {"done": False}
             return self.news(who, main)
-
-
-
