@@ -5,7 +5,7 @@ description: How a swarmory run's Harbor jobs flow, from a finished task folder 
 
 # Running Harbor jobs
 
-A run started with `--jobs` runs Harbor for you. You never run `harbor`, `docker` or `modal` yourself, except
+A run with jobs runs Harbor for you. You never run `harbor`, `docker` or `modal` yourself, except
 `harbor datasets list`. You hold no Modal token and no model key. Where another skill, such as create-task, rewardkit
 or eval-factory, shows a `harbor run`, `harbor task init` or `docker` command, this skill takes precedence in a
 swarmory run.

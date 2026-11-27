@@ -119,7 +119,7 @@ setup = "sh my-agent-config.sh"   # a file of the mission
 | `--subscription` | Use your Claude or ChatGPT plan instead of API keys. |
 | `--grant NAME` | Give every agent an environment variable, or a Modal secret. |
 | `--allow HOST` | On Modal, let agents reach `HOST` too. |
-| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit. [`missions/eval-factory`](missions/eval-factory) is a mission that builds such evals. |
+| `--jobs` | Let agents run [Harbor](https://github.com/laude-institute/harbor) evals on what they commit, as `jobs = true` in the mission's team.toml does. [`missions/eval-factory`](missions/eval-factory) is a mission that builds such evals. |
 
 ## How agents work
 

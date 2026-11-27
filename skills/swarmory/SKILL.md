@@ -313,10 +313,12 @@ clone. If it fails, the agent's next session is told, with the end of its output
 
 ### team.toml
 
-`start` reads `team.toml` from the mission folder when it has no `--team`. `--team` replaces it, and doesn't merge
-with it. Each `[[agent]]` is one agent, or `count` alike:
+`start` reads `team.toml` from the mission folder. `--team` replaces its agents, and doesn't merge with them. Each
+`[[agent]]` is one agent, or `count` alike. `jobs = true` starts the run with jobs, as `--jobs` does:
 
 ```toml
+jobs = true
+
 [[agent]]
 harness = "claude-code"
 model = "claude-sonnet-5-5"
@@ -375,7 +377,7 @@ Other `start` options:
 - `--grant NAME` gives every agent the variable `NAME` from a local server's environment, or the Modal secret `NAME`.
   Agents can read and spend it, so tell the person.
 - `--allow HOST` lets agents on Modal reach `HOST`.
-- `--jobs` lets agents run Harbor evals with `swarmory job harbor`. Give them the `running-harbor-jobs` skill as above.
+- `--jobs` lets agents run Harbor evals with `swarmory job harbor`, as `jobs = true` in team.toml does. Give them the `running-harbor-jobs` skill as above.
   On Modal the person also creates the secret `swarmory-modal` with `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
   For a mission that builds evals, copy `missions/eval-factory` from the swarmory repo. Its skills are in
   `.agents/skills/`. To test another capability, change its BRIEF.md title, bold line, and number of tasks.

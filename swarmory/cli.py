@@ -594,35 +594,38 @@ def parse_team(specs: list, one: bool = False) -> list:
 
 
 def read_team(path: Path):
-    """A mission's team.toml as the start verb's team. It holds [[agent]] entries: each is a team entry, which the
-    server checks, and may have a count (default 1) of agents like it."""
+    """A mission's team.toml: its team, and whether the run has jobs. It holds [[agent]] entries, each a team entry,
+    which the server checks, with a count (default 1) of agents like it, and may say `jobs = true`."""
     try:
         doc = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:
         fail("%s: %s" % (path, e))
-    entries, team = doc.pop("agent", None), []
-    if doc or not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
-        fail("%s: want [[agent]] entries and nothing else" % path)
+    entries, jobs, team = doc.pop("agent", None), doc.pop("jobs", False), []
+    if doc or not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries) or type(jobs) is not bool:
+        fail("%s: want [[agent]] entries, and jobs = true or false, and nothing else" % path)
     for n, e in enumerate(entries, 1):
         count = e.pop("count", 1)
         if type(count) is not int or count < 1 or e.get("name") and count > 1:
             fail("%s: [[agent]] %d: count is 1 or more, and a name is one agent's, so it takes no count" % (path, n))
         team += [e] * count
-    return team
+    return team, jobs
 
 
 def start_run(mission, team=None, **options) -> dict:
     """What `swarmory start` and the MCP start tool do, and the start verb's answer. Asks the server at the operator's
     login for a run of the mission folder, starting a local server first when none answers; pushes the folder to the
     run's repo as main, which starts the agents; and makes the run the login's. `team` is the start verb's, and when
-    None the mission's team.toml, else two agents of the first harness. `options` are the verb's other parameters."""
+    None the mission's team.toml, else two agents of the first harness. `options` are the verb's other parameters; the
+    run has jobs if they or team.toml say so."""
     from swarmory import seed
     mission = Path(mission).resolve()
     if not (mission / "BRIEF.md").is_file():
         fail("%s is not a mission: it has no BRIEF.md" % mission)
     toml = mission / "team.toml"
+    listed, jobs = read_team(toml) if toml.is_file() else ([{"harness": harness.HARNESSES[0].name}] * 2, False)
     if team is None:  # not given: one given empty goes as it is, and the server refuses it
-        team = read_team(toml) if toml.is_file() else [{"harness": harness.HARNESSES[0].name}] * 2
+        team = listed
+    options["jobs"] = options.get("jobs") or jobs
     me = (subprocess.run(["git", "config", "user.name"], capture_output=True, text=True).stdout.split()
           or [os.environ.get("USER", "")])[0]  # your id in the run: your first name from git
     d = saved()
@@ -691,7 +694,7 @@ def start(argv):
                    "server's environment, or a Modal secret; repeatable")
     p.add_argument("--allow", action="append", metavar="HOST", help="on Modal, let agents reach HOST too; repeatable")
     p.add_argument("--jobs", action="store_true", help="let members ask for jobs with `swarmory job`: Harbor evals "
-                   "of the task folders they commit")
+                   "of the task folders they commit (also `jobs = true` in team.toml)")
     p.add_argument("--subscription", action="store_true", help="call models with the server's subscription logins")
     p.add_argument("--dry-run", action="store_true", help="check the run and print its server, deadline, budget "
                    "and team, but start nothing")
