@@ -256,9 +256,15 @@ class Handler(BaseHTTPRequestHandler):
                "GIT_HTTP_EXPORT_ALL": "1", "PATH_INFO": path, "QUERY_STRING": query, "REQUEST_METHOD": self.command,
                "CONTENT_TYPE": self.headers.get("Content-Type", ""), "CONTENT_LENGTH": str(len(body)),
                "REMOTE_USER": who, "REMOTE_ADDR": self.client_address[0]}
+        push, fetch = self.run.refs(who)
+        env["SWARMORY_PUSH"] = " ".join(push)
+        hide = [] if fetch is None else ["refs/", *("!" + r for r in fetch)]
+        env["GIT_CONFIG_COUNT"] = str(len(hide))
+        for i, h in enumerate(hide):
+            env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = "uploadpack.hideRefs", h
         if self.headers.get("Content-Encoding"):
             env["HTTP_CONTENT_ENCODING"] = self.headers["Content-Encoding"]
-        if self.headers.get("Git-Protocol"):
+        if self.headers.get("Git-Protocol") and fetch is None:  # v2 serves any object by id, hidden ref or not
             env["GIT_PROTOCOL"] = self.headers["Git-Protocol"]
         with tempfile.TemporaryFile() as sent:  # a file, so git can answer while it still reads a large request
             sent.write(body)

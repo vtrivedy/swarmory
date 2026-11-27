@@ -57,11 +57,11 @@ FORMAT = "%H%x1f%ce%x1f%an%x1f%ct%x1f%s%x1f"  # then the body, or in a log the f
 SESSIONS = {}  # session file -> (its size, its events), the CACHED most recently read: a file is read once per size
 CACHED = 64
 PRE_RECEIVE = """#!/bin/sh
+set -f
 while read -r old new ref; do
-  case "$ref" in
-    refs/heads/main|refs/submit/*) ;;
-    *) echo "Push to main only: this server refuses $ref. Rebase your commits onto main and push main."; exit 1 ;;
-  esac
+  ok=
+  for p in ${SWARMORY_PUSH-refs/heads/main refs/submit/*}; do case "$ref" in $p) ok=1 ;; esac; done
+  [ -n "$ok" ] || { echo "This server refuses $ref from you. You may push: ${SWARMORY_PUSH-refs/heads/main}."; exit 1; }
 done
 """
 READS = threading.Lock()  # around SESSIONS, which viewers' requests share
@@ -111,6 +111,14 @@ class Run:
 
     def state(self, now: float = None) -> str:
         return state(self.config, now)
+
+    def refs(self, who):
+        """Prototype of the git piece's choice: (patterns `who` may push, refs it may fetch or None for all)."""
+        tags = self.team.members[who].get("tags") or ()
+        squad = next((t[6:] for t in tags if t.startswith("squad:")), None)
+        if not squad:
+            return ("refs/heads/main", "refs/submit/*"), None
+        return (f"refs/heads/squad/{squad}",), ("refs/heads/main", f"refs/heads/squad/{squad}")
 
     def principal(self, token: str, grace: float = 0):
         """Whose token this is in this run (policy.Principal), or None. Only a running run takes its members', jobs'
@@ -426,7 +434,7 @@ def agents(team, backend, env, owner, priced, *, hours: float, budget, subscript
     built_in, command = [h.name for h in harness.HARNESSES], harness.COMMAND_FIELDS
     for n, m in enumerate(team, 1):
         if (not isinstance(m, dict) or not isinstance(m.get("harness"), str)
-                or m.keys() - {"harness", "model", "role", "name", "args", *command}
+                or m.keys() - {"harness", "model", "role", "name", "args", "tags", *command}
                 or not all(isinstance(m.get(k) or "", str) for k in ("model", "role", "name", *command))
                 or not isinstance(m.get("args") or [], list)
                 or not all(isinstance(a, str) and "\n" not in a for a in m.get("args") or [])):
@@ -479,6 +487,7 @@ def agents(team, backend, env, owner, priced, *, hours: float, budget, subscript
                              "the server's environment does not have.")
     return [{"id": i, "name": line(m, "name") or i.title(), "harness": m["harness"], "model": m.get("model") or None,
              "role": line(m, "role"), "args": m.get("args") or [], "kind": "agent",
+             **({"tags": m["tags"]} if m.get("tags") else {}),
              **{k: m[k] for k in harness.COMMAND_FIELDS if m.get(k)}} for i, m in zip(ids, team)]
 
 
