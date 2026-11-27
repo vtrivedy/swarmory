@@ -359,3 +359,17 @@ def test_the_operator_changes_a_running_team_and_the_team_hears_it(serve, monkey
     assert said[3].startswith("@all The run ends in about 5 minutes.") and "$18.50 of its $20.00" in said[4]
     assert len(said) == 5, said
     assert run(grace, "me")["status"] == 401
+
+
+def test_a_missions_image_sh_builds_the_agents_image_once_and_a_failed_build_stops_the_run(serve):
+    served = serve()
+    run = served.start(image="apt-get install -y jq\n")
+    run.workers("ada")
+    assert served.backend.specs[f"{run.id}/agent/ada"].image == "im-22"
+
+    bad = served.start(image="exit 1\n")
+    r = served.server.runs.get(bad.id)
+    assert soon(lambda: r.config.get("stopped")), "the run goes on"
+    assert not any(n.startswith(bad.id) for n in served.backend.specs)
+    said = [e.get("text", "") for e in map(json.loads, r.team.path.read_text().splitlines())]
+    assert any("image.sh failed to build" in t and "im-bad" in t for t in said)

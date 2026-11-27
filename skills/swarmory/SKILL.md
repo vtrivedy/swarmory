@@ -243,7 +243,7 @@ swarmory login URL $TOKEN
 [Run on this machine](#run-on-this-machine) works the same from the git name in step 1 to step 5, and the dry run's
 `server` line shows the Modal URL. If the dry run says a key or login is missing or will expire before the run ends,
 the person fixes the secret as "Change a key or login" below says. `setup.sh` runs in each agent's sandbox, so it can
-install only from hosts the run allows.
+install only from hosts the run allows. Put installs from other hosts in `image.sh`.
 
 | To | Who runs it |
 |---|---|
@@ -302,6 +302,7 @@ wordfreq/
   BRIEF.md         required. Its first line is the first commit's message.
   team.toml        optional: names, roles and args for each agent
   setup.sh         optional: installs tools in each clone each time its worker starts; safe to run twice
+  image.sh         optional, Modal only: installs system tools into the agents' image, once per run
   .agents/skills/  optional: skills for the agents
   ...              starting code, data, docs
 ```
@@ -310,6 +311,13 @@ Everything in the folder reaches the agents, except what `.gitignore` ignores, `
 any symlink that points outside the folder. Leave out answers and private notes. `setup.sh` must work on this machine
 and in a Debian sandbox. It runs again on every worker start, as a restarted Modal sandbox keeps only HOME and the
 clone. If it fails, the agent's next session is told, with the end of its output, so try it on this machine first.
+
+`image.sh` is for what a Modal agent needs outside HOME: system packages, compilers, large tools. `start` sends it
+to the server, which runs it with `bash -e` as root in a Debian layer on the agents' image, with the network open,
+and starts the agents once that is built. The first build takes minutes, and the same script builds once. Install
+system-wide, such as `apt-get install -y ...`, `pip install ...` or into `/usr/local/bin`. If it fails, the run
+stops and says so in general, with the command that shows the build's log. A local run skips it, as its agents use
+this machine's tools. The team can't change it: it is the one `start` sent.
 
 ### team.toml
 

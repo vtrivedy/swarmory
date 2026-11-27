@@ -616,7 +616,7 @@ def start_run(mission, team=None, **options) -> dict:
     login for a run of the mission folder, starting a local server first when none answers; pushes the folder to the
     run's repo as main, which starts the agents; and makes the run the login's. `team` is the start verb's, and when
     None the mission's team.toml, else two agents of the first harness. `options` are the verb's other parameters; the
-    run has jobs if they or team.toml say so."""
+    run has jobs if they or team.toml say so. The mission's image.sh, if it has one, goes with the request."""
     from swarmory import seed
     mission = Path(mission).resolve()
     if not (mission / "BRIEF.md").is_file():
@@ -626,6 +626,8 @@ def start_run(mission, team=None, **options) -> dict:
     if team is None:  # not given: one given empty goes as it is, and the server refuses it
         team = listed
     options["jobs"] = options.get("jobs") or jobs
+    if (mission / "image.sh").is_file():
+        options["image"] = (mission / "image.sh").read_text()
     me = (subprocess.run(["git", "config", "user.name"], capture_output=True, text=True).stdout.split()
           or [os.environ.get("USER", "")])[0]  # your id in the run: your first name from git
     d = saved()

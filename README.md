@@ -177,8 +177,9 @@ swarmory login URL $TOKEN
 
 `deploy` prints `URL`. After `login`, every `swarmory` command goes to that server, and runs go on with your laptop
 closed. Your machine needs uv, git and swarmory, but no coding agents: they are in the agents' image. Each agent's
-sandbox reaches the server and nothing else, unless `--allow` adds a host. The server runs all the time, so it spends
-Modal compute between runs too.
+sandbox reaches the server and nothing else, unless `--allow` adds a host. A mission's `image.sh`, if it has one,
+runs as root with the network open and adds system tools to the agents' image, which is built once and then reused.
+The server runs all the time, so it spends Modal compute between runs too.
 
 | To | Run |
 |---|---|

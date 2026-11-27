@@ -141,6 +141,9 @@ class Local:
         if r and self.recorded(name) == r:  # not a newer worker's record, written meanwhile
             self.pidfile(name).unlink(missing_ok=True)
 
+    def image(self, script: str) -> str:
+        return ""  # agents run on this machine, with its tools
+
     def check(self, harnesses: list, grants: list, allow: list):
         for h in harnesses:
             if not shutil.which(h.cli, path=tools()):

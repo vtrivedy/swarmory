@@ -20,7 +20,9 @@ Volume, spec.home, at MOUNT. Its HOME is a folder of that, so its coding agent's
 outlive its sandbox. The running server does not see those writes (a container sees another's commits only once it
 starts), so an export takes sessions from the copies agents upload. A --grant NAME is the Modal secret NAME.
 A job worker gets the one secret JOB_SECRET, the Modal token Harbor starts its trials' sandboxes with. Agents run a
-mission's setup.sh themselves, so it can install only from hosts the run allows."""
+mission's setup.sh themselves, so it can install only from hosts the run allows. A mission's image.sh, which the
+operator's `start` sends, runs once as root in a layer on the agents' image (image()), with the network open."""
+import base64
 import os
 import shlex
 import subprocess
@@ -130,9 +132,18 @@ class Modal:
                         "HOME": f"{MOUNT}/home"})
             more.update(AGENT_SIZE, volumes={MOUNT: volume.with_mount_options(sub_path=spec.home)})
         secrets = spec.grants if spec.role == "agent" else (JOB_SECRET,)
-        modal.Sandbox.create(*command, app=self.app, image=modal.Image.from_id(self.images[spec.role]), env=env,
+        image = modal.Image.from_id(spec.image or self.images[spec.role])
+        modal.Sandbox.create(*command, app=self.app, image=image, env=env,
                              secrets=[modal.Secret.from_name(s) for s in secrets],
                              tags=dict(zip(TAGS, spec.name.split("/"))), **more)
+
+    def image(self, script: str) -> str:
+        """Builds a layer on the agents' image that runs `script` with bash -e as root, with the network open. Modal
+        caches layers by their command, so the same script on the same image builds once."""
+        line = base64.b64encode(script.encode()).decode()
+        image = modal.Image.from_id(self.images["agent"]).run_commands(
+            f"echo {line} | base64 -d > /tmp/image.sh && cd /tmp && bash -e image.sh && rm image.sh")
+        return image.build(self.app).object_id
 
     def live(self) -> frozenset:
         names = set()

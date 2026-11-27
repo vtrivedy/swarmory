@@ -16,6 +16,7 @@ class WorkerSpec:
     allow_hosts: tuple = ()  # the hosts it may reach: the server's, plus the run's --allow
     home: str = ""         # its folder in the server's data, which survives a restart: an agent's runs/RUN/members/ID,
                            # a job's runs/RUN/jobs/JID
+    image: str = ""        # an agent's image when its mission has an image.sh: what Backend.image returned
 
     @property
     def role(self) -> str:
@@ -34,6 +35,10 @@ class Backend(Protocol):
 
     def stop(self, name: str) -> None:
         """Stops the worker and all it started. Nothing happens if it is not running."""
+
+    def image(self, script: str) -> str:
+        """The agents' image with `script`, a mission's image.sh, run in it as root: its id, or "" where agents run on
+        this machine and use its tools. It may take minutes. Raises what the build raised."""
 
     def check(self, harnesses: list, grants: list, allow: list) -> None:
         """Raises a ValueError, when a run is asked for, that names what this backend cannot give its agents."""

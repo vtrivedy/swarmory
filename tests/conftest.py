@@ -75,6 +75,11 @@ class Stub:
     def stop(self, name):
         self.up.discard(name)
 
+    def image(self, script):
+        if "exit 1" in script:
+            raise RuntimeError("Image build for im-bad failed.")
+        return "im-" + str(len(script))
+
     def check(self, harnesses, grants, allow):
         pass
 
