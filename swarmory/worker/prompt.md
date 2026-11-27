@@ -33,7 +33,7 @@ the run has spent.
 
 $network
 
-Do not install, start, or use Docker or Modal yourself.$nojobs
+Do not install, start, or use Docker or Modal yourself.
 
 Your run token is in ~/.swarmory/login and in your environment, in SWARMORY_TOKEN and the coding agent's API key
 variables. Never print it, and never put a token in a file, a commit, or a message.

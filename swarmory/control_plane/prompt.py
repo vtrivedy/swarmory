@@ -94,5 +94,4 @@ def prompt(config: dict, member: dict, brief: str, skills: list, backend: str, h
         skills=skill_list(skills), jobs=jobs, brief=brief.rstrip("\n"),
         lead=f"You start first. Your teammates start when you open the first issue, or {STAGGER // 60} minutes after "
         "you start. Split the work into issues before you start on any of it, so they find it split.\n\n"
-        if lead else "",
-        nojobs="" if config.get("jobs") else " This run has no jobs, so the server refuses `swarmory job`.")
+        if lead else "")

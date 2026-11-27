@@ -159,7 +159,7 @@ def test_the_starting_prompt_holds_the_brief_the_skills_and_the_agents_machine(s
     member = r.team.members["ada"]
     modal = prompt({**r.config, "jobs": False}, member, brief, [], "modal", ("x.modal.run", "pypi.org"), "")
     assert "It reaches only these hosts: x.modal.run, pypi.org." in modal and "The network is open." not in modal
-    assert "has no jobs" in modal and "swarmory job harbor" not in modal and "mission's skills" not in modal
+    assert "job" not in modal.replace(brief, "") and "mission's skills" not in modal
     r.jobs.url = "https://x.modal.run"  # a deployed server: trials run on Modal
     assert "on Modal" in prompt(r.config, member, brief, skills, "modal", (), r.jobs.guide())
 
