@@ -222,6 +222,10 @@ def jobs_text(r: dict, req: dict) -> str:
                                                    else "No jobs yet.")
 
 
+IMAGE = {"building": "the agents start once image.sh is built into their image: the first build takes minutes",
+         "skipped": "agents on this machine use its tools, so image.sh is not run"}
+
+
 def started_text(r: dict, req: dict) -> str:
     if r.get("dry"):
         return "\n".join([f"server  {r['server']}",
@@ -233,7 +237,8 @@ def started_text(r: dict, req: dict) -> str:
                           "Dry run: nothing started."])
     return "\n".join([f"run    {r['run']}: until {time.strftime('%H:%M %Z', time.localtime(r['deadline']))}",
                       f"url    {r['url']}",
-                      f"watch  {r['view']}   (read-only: anyone with the link sees the whole run)"])
+                      f"watch  {r['view']}   (read-only: anyone with the link sees the whole run)",
+                      *([f"image  {IMAGE[r['image']]}"] if r.get("image") else [])])
 
 
 def runs_text(r: dict, req: dict) -> str:
@@ -323,7 +328,8 @@ def start(server, req: dict, token: str) -> dict:
                             if m["kind"] == "agent"]}
     run, url = server.runs.create(config), f"{server.url}/r/{config['run']}"
     return {"run": run.id, "url": url, "view": f"{url}/view#{view}", "deadline": config["deadline"],
-            "members": [m["id"] for m in config["members"]]}
+            "members": [m["id"] for m in config["members"]],
+            **({"image": "building" if server.backend.kind == "modal" else "skipped"} if config["image"] else {})}
 
 
 def listing(server, req: dict, token: str) -> dict:

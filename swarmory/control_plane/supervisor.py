@@ -6,7 +6,8 @@ worker is gone, which also ends the sandboxes its Harbor left. plan() is pure; t
 worker starts only once its clone, members/ID/work, exists: the server makes it from the run's repo. Before each start
 the server writes the agent's starting prompt, rendered from main, to members/ID/prompt.md. Starting an agent mints its
 token, so a restarted worker holds a new one and the old one stops working; starting a job's worker claims the job,
-which mints its tokens."""
+which mints its tokens. A run whose mission has an image.sh starts its agents once the backend has built their image
+from it; a build that fails stops the run, as no agent of it can start."""
 import json
 import os
 import secrets
@@ -84,6 +85,7 @@ class Supervisor:
         self.host = urlsplit(url).hostname
         self.lock = threading.Lock()  # one tick at a time: the loop's, or a verb's that asked for one now
         self.ticks = 0  # ticks done, so a tick knows whether another ran since it read what runs
+        self.images = {}  # run id: its agents' image (Backend.image), or None while it builds
         self.done = threading.Event()
 
     def loop(self):
@@ -139,9 +141,13 @@ class Supervisor:
         return (self.host, *run.config.get("allow", ()))
 
     def clone(self):
-        """Makes the clone of each agent that should run and has none."""
+        """Makes the clone of each agent that should run and has none, and starts building its run's image if that has
+        not started."""
         now = time.time()
         for run in self.runs.loaded():
+            if run.config.get("image") and run.id not in self.images and any(w.run for w in run.wanted(now)):
+                self.images[run.id] = None
+                threading.Thread(target=self.build, args=(run,), daemon=True).start()
             for w in run.wanted(now):
                 _, role, wid = w.name.split("/")
                 if not w.run or role != "agent":
@@ -150,6 +156,17 @@ class Supervisor:
                     prepare(run.repo, self.work(run, wid))
                 except Exception:  # its worker waits for a clone, which the next tick tries again
                     traceback.print_exc()
+
+    def build(self, run):
+        """Builds the image of the run's agents, which may take minutes, so in a thread of its own. A failed build
+        stops the run, as no agent of it can start."""
+        try:
+            self.images[run.id] = self.backend.image(run.config["image"])
+        except Exception as e:
+            traceback.print_exc()
+            run.team.announce(f"The mission's image.sh failed to build, so no agent can start, and the run is "
+                              f"stopped. Fix image.sh and start a new run. {e}", "image")
+            run.stop()
 
     def do(self, step: Step):
         rid, role, wid = step.name.split("/")
@@ -161,8 +178,8 @@ class Supervisor:
             run.jobs.cleanup(run.jobs.view(wid))
         elif role == "agent":
             work = self.work(run, wid)
-            if not (work / ".git").is_dir():  # a start would find no clone
-                return
+            if not (work / ".git").is_dir() or run.config.get("image") and self.images.get(run.id) is None:
+                return  # a start would find no clone, or no image yet
             brief, skills = mission(run.repo)
             (work.parent / "prompt.md").write_text(prompt(run.config, run.team.members[wid], brief, skills,
                                                           self.backend.kind, self.hosts(run), run.jobs.guide(),
@@ -190,7 +207,7 @@ class Supervisor:
              "SWARMORY_ARGS": "\n".join(member.get("args") or ()),
              **({"SWARMORY_MODEL_META": json.dumps(meta)} if meta else {}),
              **{f"SWARMORY_{k.upper()}": member[k] for k in harness.COMMAND_FIELDS if member.get(k)}},
-            tuple(c.get("grants", ())), self.hosts(run), self.home(run, member["id"]))
+            tuple(c.get("grants", ())), self.hosts(run), self.home(run, member["id"]), self.images.get(run.id) or "")
 
     def job(self, run, claimed: dict) -> WorkerSpec:
         """A job's worker. It must be gone at SWARMORY_DEADLINE, the job's limit. HARBOR, when the server has one, is

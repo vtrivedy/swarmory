@@ -48,6 +48,7 @@ NAMES = (
     "ida rita tu jane rachel sylvia wangari "
 ).split()  # agents' names, in order; a team bigger than the list goes round again as ada2, grace2, ...
 RESERVED = ("all", "channel", "here", "general", "me")  # words for a group, a channel or the caller: no member's id
+IMAGE_MOST = 32 << 10  # bytes of a mission's image.sh, which goes in the run's config
 FEED_MOST = 4 << 20  # bytes of each log per /feed answer; the viewer asks again for the rest
 TRACE_EVENTS = 3000  # events per /trace answer; the viewer asks again for the rest
 SESSION = re.compile(r"session-(\d+)\.jsonl")
@@ -390,6 +391,9 @@ def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple
     mission, (hours, budget) = req.get("mission"), limits(req)
     grants, allow = req.get("grant") or [], req.get("allow") or []
     me, jobs, subscription = req.get("me") or "operator", req.get("jobs") or False, bool(req.get("subscription"))
+    image = req.get("image") or None
+    if image is not None and (not isinstance(image, str) or len(image.encode()) > IMAGE_MOST):
+        raise ValueError(f"image is the mission's image.sh: a script of at most {IMAGE_MOST // 1024} KB")
     if not isinstance(mission, str) or not 0 < len(mission) <= 100:
         raise ValueError("mission is the mission's name, 1 to 100 characters")
     if not all(isinstance(x, list) and all(isinstance(s, str) for s in x) for x in (grants, allow)) \
@@ -407,7 +411,8 @@ def new_run(req: dict, backend, env, operator: str, owner, priced=None) -> tuple
     view = view_token(operator, rid)
     return {"run": rid, "mission": mission, "created": now, "deadline": int(now + hours * 3600), "members": members,
             "operator": op, "view_sha256": sha(view), "channels": [{"id": "general", "about": "The whole team."}],
-            "budget": budget, "jobs": jobs, "grants": grants, "allow": allow, "subscription": subscription}, view
+            "budget": budget, "jobs": jobs, "grants": grants, "allow": allow, "subscription": subscription,
+            "image": image}, view
 
 
 def agents(team, backend, env, owner, priced, *, hours: float, budget, subscription: bool, grants: list, allow: list,
